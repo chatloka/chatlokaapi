@@ -2,37 +2,73 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "chatlokaapi",
   "main": "src/index.ts",
-  "compatibility_date": "2026-05-12"
-  // "compatibility_flags": [
-  //   "nodejs_compat"
-  // ],
-  // "vars": {
-  //   "MY_VAR": "my-variable"
-  // },
-  // "kv_namespaces": [
-  //   {
-  //     "binding": "MY_KV_NAMESPACE",
-  //     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-  //   }
-  // ],
-  // "r2_buckets": [
-  //   {
-  //     "binding": "MY_BUCKET",
-  //     "bucket_name": "my-bucket"
-  //   }
-  // ],
-  // "d1_databases": [
-  //   {
-  //     "binding": "MY_DB",
-  //     "database_name": "my-database",
-  //     "database_id": ""
-  //   }
-  // ],
-  // "ai": {
-  //   "binding": "AI"
-  // },
-  // "observability": {
-  //   "enabled": true,
-  //   "head_sampling_rate": 1
-  // }
+  "compatibility_date": "2026-05-20",
+  "vars": {
+    "ENVIRONMENT": "production",
+    "API_BASE_URL": "https://api.chatloka.net"
+  },
+  "secrets": {
+    "required": [
+      "DOWNLOAD_TOKEN_SECRET",
+      "RSA_PRIVATE_KEY",
+      "ENVATO_PERSONAL_TOKEN"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "chatloka",
+      "database_id": "19053391-e143-4cfa-a233-2f469efb2669",
+      "remote": true
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PLUGINS_BUCKET",
+      "bucket_name": "chatlokaapi",
+      "remote": true
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "RL_VALIDATE",
+      "namespace_id": "21001",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "RL_ACTIVATE",
+      "namespace_id": "21002",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "RL_DEACTIVATE",
+      "namespace_id": "21003",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "RL_PLUGIN_TOKEN",
+      "namespace_id": "21004",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    },
+    {
+      "name": "RL_PLUGIN_DOWNLOAD",
+      "namespace_id": "21005",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ]
 }
