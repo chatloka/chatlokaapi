@@ -582,7 +582,14 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 // Admin API routes (protected by session middleware)
 app.route('/manage/api', adminRoutes)
 
-app.notFound((c) => c.json({ success: false, message: 'Endpoint not found' }, 404))
+// SPA fallback - serve assets for non-API routes
+app.get('*', async (c) => {
+  const url = new URL(c.req.url)
+  if (!url.pathname.startsWith('/api/')) {
+    return c.env.ASSETS.fetch(c.req.raw)
+  }
+  return c.json({ success: false, message: 'Endpoint not found' }, 404)
+})
 
 app.onError((_err, c) => c.json({ success: false, message: 'Internal server error' }, 500))
 
