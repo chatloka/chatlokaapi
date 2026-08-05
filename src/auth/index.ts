@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { captcha } from "better-auth/plugins";
+// import { captcha } from "better-auth/plugins"; // Disabled temporarily - DO NOT RE-ENABLE WITHOUT EXPLICIT REQUEST
 
 const ITERATIONS = 100_000;
 const KEY_LENGTH = 32;
@@ -89,10 +89,10 @@ export function createAuth(env: {
       updateAge: 60 * 60 * 24,
     },
     plugins: [
-      captcha({
-        provider: "cloudflare-turnstile",
-        secretKey: env.TURNSTILE_SECRET_KEY,
-      }),
+      // captcha({
+      //   provider: "cloudflare-turnstile",
+      //   secretKey: env.TURNSTILE_SECRET_KEY,
+      // }),
     ],
   });
 }

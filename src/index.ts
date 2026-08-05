@@ -53,21 +53,22 @@ app.use('/api/*', async (c, next) => {
   try {
     await next()
     statusCode = c.res.status
-    return c.res
   } catch (error) {
     statusCode = 500
     throw error
   } finally {
     const responseTimeMs = Date.now() - startTime
 
-    // Fire-and-forget logging (don't block response)
-    c.env.DB.prepare(
-      `INSERT INTO api_logs (method, endpoint, ip_address, user_agent, purchase_code, domain, status_code, response_time_ms, request_size_bytes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-    )
-      .bind(method, endpoint, ip, userAgent, purchaseCode, domain, statusCode, responseTimeMs, requestBodySize)
-      .run()
-      .catch(() => {}) // Silently ignore logging errors
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO api_logs (method, endpoint, ip_address, user_agent, purchase_code, domain, status_code, response_time_ms, request_size_bytes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      )
+        .bind(method, endpoint, ip, userAgent, purchaseCode, domain, statusCode, responseTimeMs, requestBodySize)
+        .run()
+    } catch (e) {
+      console.error('[API Log] Failed to write log:', e)
+    }
   }
 })
 

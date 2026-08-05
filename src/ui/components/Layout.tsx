@@ -234,9 +234,9 @@ export function Layout() {
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={handleLogout}
-                          className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive"
+                          className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive [&>svg]:text-destructive"
                         >
-                          <IconLogout className="mr-2 h-4 w-4" />
+                          <IconLogout className="mr-2 h-4 w-4 text-destructive" />
                           Logout
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -273,9 +273,9 @@ export function Layout() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={handleLogout}
-                    className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive"
+                    className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive [&>svg]:text-destructive"
                   >
-                    <IconLogout className="mr-2 h-4 w-4" />
+                    <IconLogout className="mr-2 h-4 w-4 text-destructive" />
                     Logout
                   </DropdownMenuItem>
                 </DropdownMenuContent>

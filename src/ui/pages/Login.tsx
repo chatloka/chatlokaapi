@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Turnstile } from "@marsidev/react-turnstile"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,8 +11,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { IconEye, IconEyeOff } from "@tabler/icons-react"
-
-const TURNSTILE_SITE_KEY = "0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM"
 
 interface LoginResponse {
   error?: {
@@ -28,7 +25,6 @@ export function Login() {
   const [rememberMe, setRememberMe] = useState(true)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const navigate = useNavigate()
 
   async function handleSubmit(e: React.FormEvent) {
@@ -36,18 +32,11 @@ export function Login() {
     setLoading(true)
     setError("")
 
-    if (!turnstileToken) {
-      setError("Please complete the captcha verification")
-      setLoading(false)
-      return
-    }
-
     try {
       const res = await fetch("/api/auth/sign-in/email", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-captcha-response": turnstileToken,
         },
         credentials: "include",
         body: JSON.stringify({ email, password, rememberMe }),
@@ -134,15 +123,6 @@ export function Login() {
               <Label htmlFor="rememberMe" className="text-sm font-normal cursor-pointer">
                 Remember me
               </Label>
-            </div>
-            <div className="flex justify-center">
-              <Turnstile
-                siteKey={TURNSTILE_SITE_KEY}
-                onSuccess={(token) => setTurnstileToken(token)}
-                onExpire={() => setTurnstileToken(null)}
-                onError={() => setTurnstileToken(null)}
-                options={{ size: "normal" }}
-              />
             </div>
             <Button type="submit" className="w-full cursor-pointer" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
