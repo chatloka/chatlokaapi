@@ -582,11 +582,6 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 // Admin API routes (protected by session middleware)
 app.route('/manage/api', adminRoutes)
 
-// SPA fallback - serve index.html for /manage/* routes
-app.get('/manage/*', async (c) => {
-  return c.env.ASSETS.fetch(new URL('/', c.req.url))
-})
-
 app.notFound((c) => c.json({ success: false, message: 'Endpoint not found' }, 404))
 
 app.onError((_err, c) => c.json({ success: false, message: 'Internal server error' }, 500))
