@@ -574,7 +574,7 @@ app.get('/downloads/:filename', async (c) => {
 })
 
 // Better Auth handler
-app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
+app.all('/api/auth/*', async (c) => {
   const auth = createAuth(c.env)
   return auth.handler(c.req.raw)
 })
