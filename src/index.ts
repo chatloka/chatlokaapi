@@ -582,13 +582,24 @@ app.all('/api/auth/*', async (c) => {
 // Admin API routes (protected by session middleware)
 app.route('/manage/api', adminRoutes)
 
-// SPA fallback - serve assets for non-API routes
+// SPA fallback - serve assets, fallback to index.html for client-side routing
 app.all('*', async (c) => {
   const url = new URL(c.req.url)
-  if (!url.pathname.startsWith('/api/')) {
-    return c.env.ASSETS.fetch(c.req.raw)
+
+  // API routes
+  if (url.pathname.startsWith('/api/')) {
+    return c.json({ success: false, message: 'Endpoint not found' }, 404)
   }
-  return c.json({ success: false, message: 'Endpoint not found' }, 404)
+
+  // Try to serve static asset
+  const assetResponse = await c.env.ASSETS.fetch(c.req.raw)
+  if (assetResponse.status !== 404) {
+    return assetResponse
+  }
+
+  // SPA fallback - serve index.html for client-side routing
+  const indexResponse = await c.env.ASSETS.fetch(new URL('/index.html', c.req.url))
+  return indexResponse
 })
 
 app.onError((_err, c) => c.json({ success: false, message: 'Internal server error' }, 500))
