@@ -7,6 +7,8 @@ import { PluginService } from './services/plugin'
 import { requireValidLicense, type LicenseContextVariables } from './middleware/requireValidLicense'
 import { getClientIp } from './http'
 import { signHs256, verifyHs256 } from './services/jwt'
+import { createAuth } from './auth'
+import { adminRoutes } from './admin'
 import type {
   ActivateRequest,
   CheckUpdatesRequest,
@@ -569,6 +571,20 @@ app.get('/downloads/:filename', async (c) => {
       ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
     },
   })
+})
+
+// Better Auth handler
+app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
+  const auth = createAuth(c.env)
+  return auth.handler(c.req.raw)
+})
+
+// Admin API routes (protected by session middleware)
+app.route('/manage/api', adminRoutes)
+
+// SPA fallback - serve index.html for /manage/* routes
+app.get('/manage/*', async (c) => {
+  return c.env.ASSETS.fetch(new URL('/', c.req.url))
 })
 
 app.notFound((c) => c.json({ success: false, message: 'Endpoint not found' }, 404))

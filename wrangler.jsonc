@@ -3,16 +3,23 @@
   "name": "chatlokaapi",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
   "vars": {
     "ENVIRONMENT": "production",
     "API_BASE_URL": "https://api.chatloka.net",
-    "ENVATO_API_URL": "https://envatoapi.chatloka.net/v3/market"
+    "ENVATO_API_URL": "https://envatoapi.chatloka.net/v3/market",
+    "BETTER_AUTH_URL": "https://api.chatloka.net"
   },
   "secrets": {
     "required": [
       "DOWNLOAD_TOKEN_SECRET",
       "RSA_PRIVATE_KEY",
-      "ENVATO_PERSONAL_TOKEN"
+      "ENVATO_PERSONAL_TOKEN",
+      "BETTER_AUTH_SECRET"
     ]
   },
   "d1_databases": [

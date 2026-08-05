@@ -8,9 +8,12 @@ export interface CloudflareBindings {
   ENVATO_API_URL?: string
   RSA_PRIVATE_KEY: string
   DOWNLOAD_TOKEN_SECRET: string
+  BETTER_AUTH_SECRET: string
+  BETTER_AUTH_URL: string
   API_BASE_URL?: string
   ENVIRONMENT?: string
   PLUGINS_BUCKET: R2Bucket
+  ASSETS: Fetcher
   RL_VALIDATE: RateLimit
   RL_ACTIVATE: RateLimit
   RL_DEACTIVATE: RateLimit
