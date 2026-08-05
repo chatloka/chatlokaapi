@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useBlocker } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -231,6 +231,13 @@ export function TicketDetail() {
   const [updatingPriority, setUpdatingPriority] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState("");
+
+  const isReplyDirty =
+    replyOpen &&
+    (replyBody.replace(/<[^>]*>/g, "").trim().length > 0 ||
+      replyFiles.length > 0);
+  const blocker = useBlocker(isReplyDirty);
+  const hasExitBlocker = blocker.state === "blocked";
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -882,6 +889,49 @@ export function TicketDetail() {
               className="max-h-[70vh] w-full object-contain rounded-md"
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Unsent reply guard */}
+      <Dialog
+        open={hasExitBlocker}
+        onOpenChange={(open) => {
+          if (!open) blocker.reset?.();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Discard unsent reply?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            You have an unsent reply. If you leave this page, your message and
+            any attached files will be lost.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer"
+              onClick={() => blocker.reset?.()}
+            >
+              Stay
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="cursor-pointer"
+              onClick={() => {
+                setReplyFiles([]);
+                setReplyBody("");
+                setReplyOpen(false);
+                blocker.proceed?.();
+              }}
+            >
+              Discard reply
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

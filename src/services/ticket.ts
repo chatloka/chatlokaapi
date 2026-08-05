@@ -56,7 +56,7 @@ export class TicketService {
   async generateTicketNumber(): Promise<string> {
     const result = await this.db.prepare('SELECT MAX(id) as max_id FROM tickets').first() as { max_id: number | null } | undefined
     const next = (result?.max_id || 0) + 1
-    return `TKT-${String(next).padStart(5, '0')}`
+    return `TICKET-${String(next).padStart(5, '0')}`
   }
 
   async getTicketsPaginated(
@@ -118,7 +118,7 @@ export class TicketService {
     await run(
       this.db,
       `INSERT INTO tickets (ticket_number, from_email, subject, purchase_code, domain, last_message_at, message_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       data.ticket_number,
       data.from_email,
       data.subject,

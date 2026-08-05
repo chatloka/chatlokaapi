@@ -149,18 +149,9 @@ export function TicketAnalyticsPage() {
             <p className="text-muted-foreground">Response performance in WIB</p>
           </div>
         </div>
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="p-6">
-                <div className="h-12 w-24 animate-pulse rounded bg-muted" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
         <CardTableSkeleton rows={8} />
       </div>
-    );
+    )
   }
 
   const s = data?.summary

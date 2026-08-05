@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Outlet, NavLink, useNavigate } from "react-router-dom"
+import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom"
 import {
   IconDashboard,
   IconKey,
@@ -41,7 +41,15 @@ const navItems = [
   { to: "/manage/licenses", icon: IconKey, label: "Licenses" },
   { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
   { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
-  { to: "/manage/tickets", icon: IconTicket, label: "Tickets" },
+  {
+    to: "/manage/tickets",
+    icon: IconTicket,
+    label: "Tickets",
+    match: (pathname: string) =>
+      pathname === "/manage/tickets" ||
+      (pathname.startsWith("/manage/tickets/") &&
+        !pathname.startsWith("/manage/tickets/analytics")),
+  },
   { to: "/manage/tickets/analytics", icon: IconChartHistogram, label: "Analytics" },
   { to: "/manage/mcp", icon: IconServer, label: "MCP" },
 ]
@@ -58,6 +66,7 @@ function getInitialCollapsed(): boolean {
 
 export function Layout() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [collapsed, setCollapsed] = useState<boolean>(getInitialCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [user, setUser] = useState<{ name: string; email: string } | null>(null)
@@ -181,20 +190,25 @@ export function Layout() {
                 )
               }
 
+              const pathname = location.pathname
+              const active = item.match
+                ? item.match(pathname)
+                : item.end
+                  ? pathname === item.to
+                  : pathname === item.to || pathname.startsWith(item.to + "/")
+
               return (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   end={item.end}
                   onClick={() => setMobileOpen(false)}
-                  className={({ isActive }) =>
-                    cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                      isActive
-                        ? "bg-sidebar-primary/15 text-sidebar-primary"
-                        : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                    )
-                  }
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                    active
+                      ? "bg-sidebar-primary/15 text-sidebar-primary"
+                      : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                  )}
                 >
                   <item.icon className="h-5 w-5 shrink-0" />
                   <span>{item.label}</span>

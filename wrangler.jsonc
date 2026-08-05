@@ -22,6 +22,8 @@
     "API_BASE_URL": "https://api.chatloka.net",
     "ENVATO_API_URL": "https://envatoapi.chatloka.net/v3/market",
     "BETTER_AUTH_URL": "https://api.chatloka.net",
+    "TICKET_FROM_NAME": "Chatloka Support",
+    "TICKET_FROM_EMAIL": "contact@support.chatloka.net",
     "TURNSTILE_SITE_KEY": "0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM"
   },
   "secrets": {

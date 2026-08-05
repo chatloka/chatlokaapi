@@ -18,6 +18,8 @@ export interface CloudflareBindings {
   MCP_API_KEY: string
   RESEND_API_KEY: string
   RESEND_WEBHOOK_SECRET: string
+  TICKET_FROM_NAME?: string
+  TICKET_FROM_EMAIL?: string
   REALTIME_DO: DurableObjectNamespace
   ASSETS: Fetcher
   RL_VALIDATE: RateLimit

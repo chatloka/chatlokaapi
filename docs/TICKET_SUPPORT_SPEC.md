@@ -104,7 +104,7 @@ ChatLoka Ticket Support System enables users to contact support via email. Every
 ```sql
 CREATE TABLE tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticket_number TEXT NOT NULL UNIQUE,          -- e.g. "TKT-00001"
+    ticket_number TEXT NOT NULL UNIQUE,          -- e.g. "TICKET-00001"
     purchase_code TEXT,                          -- Linked license (optional)
     domain TEXT,                                 -- Linked domain (optional)
     from_email TEXT NOT NULL,                    -- User's email
@@ -207,9 +207,9 @@ PLUGINS_BUCKET (chatlokaapi)
 
 **Example:**
 ```
-ticket-attachments/TKT-00001/msg_abc123/screenshot.png
-ticket-attachments/TKT-00001/msg_abc123/document.pdf
-ticket-attachments/TKT-00002/msg_def456/invoice.pdf
+ticket-attachments/TICKET-00001/msg_abc123/screenshot.png
+ticket-attachments/TICKET-00001/msg_abc123/document.pdf
+ticket-attachments/TICKET-00002/msg_def456/invoice.pdf
 ```
 
 **Why this structure?**
@@ -294,7 +294,7 @@ GET /manage/api/tickets?page=1&limit=20&status=open&search=license
   "tickets": [
     {
       "id": 1,
-      "ticket_number": "TKT-00001",
+      "ticket_number": "TICKET-00001",
       "from_email": "user@example.com",
       "subject": "Help with my license",
       "status": "open",
@@ -326,7 +326,7 @@ GET /manage/api/tickets/:ticketNumber
 {
   "ticket": {
     "id": 1,
-    "ticket_number": "TKT-00001",
+    "ticket_number": "TICKET-00001",
     "from_email": "user@example.com",
     "subject": "Help with my license",
     "status": "open",
@@ -403,7 +403,7 @@ POST /manage/api/tickets/:ticketNumber/reply
 4. Send email via Resend API:
    ```typescript
    resend.emails.send({
-     from: 'support@chatloka.net',
+     from: 'Chatloka Support <contact@support.chatloka.net>',
      to: [ticket.from_email],
      subject: `Re: ${ticket.subject}`,
      html: body_html,
@@ -594,7 +594,7 @@ const lastMessage = await getLastMessage(ticketId)
 const allReferences = await getAllReferences(ticketId)
 
 await resend.emails.send({
-  from: 'support@chatloka.net',
+  from: 'Chatloka Support <contact@support.chatloka.net>',
   to: [ticket.from_email],
   subject: `Re: ${ticket.subject}`,
   html: replyHtml,
@@ -676,7 +676,7 @@ return new Response(object.body, {
 #### Table View
 | Column | Description |
 |---|---|
-| Ticket # | `TKT-00001` |
+| Ticket # | `TICKET-00001` |
 | From | User email |
 | Subject | Email subject |
 | Status | Badge: open (green), pending (yellow), closed (gray) |
@@ -694,7 +694,7 @@ return new Response(object.body, {
 #### Layout
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Ticket #TKT-00001                    [Status ▼]    │
+│  Ticket #TICKET-00001                    [Status ▼]    │
 │  From: user@example.com                             │
 │  Subject: Help with my license                      │
 │  Created: Aug 5, 2026 9:00 AM                       │

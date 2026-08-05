@@ -762,8 +762,11 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
 
   // Send email via Resend (with attachments as base64)
   const resendService = new ResendService(env);
+  const fromName = env.TICKET_FROM_NAME || "Chatloka Support";
+  const fromEmail = env.TICKET_FROM_EMAIL || "contact@support.chatloka.net";
+  const from = `${fromName} <${fromEmail}>`;
   const result = await resendService.sendEmail({
-    from: "support@chatloka.net",
+    from,
     to: [ticket.from_email],
     subject: `Re: ${ticket.subject}`,
     html: bodyHtml,
@@ -780,7 +783,7 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   const message = await ticketService.createMessage({
     ticket_id: ticket.id,
     direction: "outbound",
-    from_email: "support@chatloka.net",
+    from_email: fromEmail,
     to_email: ticket.from_email,
     subject: `Re: ${ticket.subject}`,
     body_html: bodyHtml,
@@ -829,7 +832,7 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
     ticket_id: ticket.id,
     ticket_number: ticket.ticket_number,
     subject: ticket.subject,
-    from_email: "support@chatloka.net",
+    from_email: fromEmail,
     direction: "outbound",
     summary: bodyText?.slice(0, 200),
   });
