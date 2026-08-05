@@ -209,9 +209,9 @@ export function Layout() {
                 <TooltipTrigger
                   render={
                     <DropdownMenu>
-                      <DropdownMenuTrigger
+                        <DropdownMenuTrigger
                         render={
-                          <button className="flex w-full items-center justify-center rounded-md p-2 text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors cursor-pointer" />
+                          <Button variant="ghost" size="icon" className="w-full cursor-pointer" />
                         }
                       >
                         <Avatar size="sm">
@@ -251,7 +251,7 @@ export function Layout() {
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors cursor-pointer" />
+                    <Button variant="ghost" className="w-full justify-start gap-3 cursor-pointer" />
                   }
                 >
                   <Avatar size="sm">

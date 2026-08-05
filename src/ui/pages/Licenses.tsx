@@ -32,6 +32,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { IconDotsVertical, IconPlus, IconSearch } from "@tabler/icons-react"
 import { toast } from "sonner"
 
@@ -240,16 +247,17 @@ export function Licenses() {
                 className="max-w-sm pl-8"
               />
             </div>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer"
-            >
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-              <option value="status">Status</option>
-              <option value="domain">Domain A-Z</option>
-            </select>
+            <Select value={sort} onValueChange={setSort}>
+              <SelectTrigger className="w-[160px] cursor-pointer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+                <SelectItem value="status">Status</SelectItem>
+                <SelectItem value="domain">Domain A-Z</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -398,16 +406,16 @@ export function Licenses() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="license-type">License Type</Label>
-              <select
-                id="license-type"
-                value={createLicenseType}
-                onChange={(e) => setCreateLicenseType(e.target.value)}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-              >
-                <option value="regular">Regular</option>
-                <option value="extended">Extended</option>
-                <option value="lifetime">Lifetime</option>
-              </select>
+              <Select value={createLicenseType} onValueChange={setCreateLicenseType}>
+                <SelectTrigger className="w-full cursor-pointer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="regular">Regular</SelectItem>
+                  <SelectItem value="extended">Extended</SelectItem>
+                  <SelectItem value="lifetime">Lifetime</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="create-domain">Domain *</Label>

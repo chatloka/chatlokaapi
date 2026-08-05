@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,8 @@ import {
   IconCircleCheck,
   IconAlertCircle,
   IconDownload,
+  IconEye,
+  IconSearch,
 } from "@tabler/icons-react"
 
 interface Plugin {
@@ -64,6 +67,7 @@ export function Plugins() {
     success: boolean
     message: string
   } | null>(null)
+  const [search, setSearch] = useState("")
 
   const [slug, setSlug] = useState("")
   const [version, setVersion] = useState("")
@@ -177,6 +181,10 @@ export function Plugins() {
     return acc
   }, {} as Record<string, Plugin[]>)
 
+  const filteredSlugs = Object.entries(pluginsBySlug).filter(([slug]) =>
+    slug.toLowerCase().includes(search.toLowerCase())
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -192,83 +200,103 @@ export function Plugins() {
 
       <Card>
         <CardHeader>
-          <CardTitle>All Plugins</CardTitle>
-          <CardDescription>
-            {Object.keys(pluginsBySlug).length} plugins, {plugins.length}{" "}
-            total versions
-          </CardDescription>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>All Plugins</CardTitle>
+              <CardDescription>
+                {Object.keys(pluginsBySlug).length} plugins, {plugins.length}{" "}
+                total versions
+              </CardDescription>
+            </div>
+            <div className="relative">
+              <IconSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search plugins..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 w-full sm:w-64 cursor-text"
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
             </div>
-          ) : Object.keys(pluginsBySlug).length === 0 ? (
+          ) : filteredSlugs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <IconPackage className="h-12 w-12 mb-4" />
-              <p>No plugins uploaded yet</p>
+              <p>No plugins found</p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {Object.entries(pluginsBySlug).map(([slug, versions]) => (
-                <div key={slug}>
-                  <div className="mb-2 flex items-center gap-2">
-                    <button
-                      onClick={() => navigate(`/manage/plugins/${slug}`)}
-                      className="flex items-center gap-2 hover:underline cursor-pointer"
-                    >
-                      <IconPackage className="h-5 w-5 text-muted-foreground" />
-                      <h3 className="font-semibold text-foreground">{slug}</h3>
-                    </button>
-                    {versions.some((v) => v.is_latest) && (
-                      <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
-                        v{versions.find((v) => v.is_latest)?.version}
-                      </Badge>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDownload(slug)}
-                      className="cursor-pointer ml-auto"
-                    >
-                      <IconDownload className="mr-2 h-4 w-4" />
-                      Download
-                    </Button>
-                  </div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Version</TableHead>
-                        <TableHead>Released</TableHead>
-                        <TableHead>Checksum</TableHead>
-                        <TableHead>Status</TableHead>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Plugin</TableHead>
+                    <TableHead>Latest Version</TableHead>
+                    <TableHead>Released</TableHead>
+                    <TableHead>Total Versions</TableHead>
+                    <TableHead className="w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredSlugs.map(([slug, versions]) => {
+                    const latest = versions.find((v) => v.is_latest)
+                    return (
+                      <TableRow key={slug}>
+                        <TableCell>
+                          <button
+                            onClick={() => navigate(`/manage/plugins/${slug}`)}
+                            className="flex items-center gap-2 hover:underline cursor-pointer text-foreground font-medium"
+                          >
+                            <IconPackage className="h-4 w-4 text-muted-foreground" />
+                            {slug}
+                          </button>
+                        </TableCell>
+                        <TableCell>
+                          {latest ? (
+                            <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
+                              v{latest.version}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">-</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {latest
+                            ? new Date(latest.released_at).toLocaleDateString()
+                            : "-"}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {versions.length}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => navigate(`/manage/plugins/${slug}`)}
+                              className="cursor-pointer h-8 w-8"
+                            >
+                              <IconEye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDownload(slug)}
+                              className="cursor-pointer h-8 w-8"
+                            >
+                              <IconDownload className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
                       </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {versions.map((plugin) => (
-                        <TableRow key={plugin.id}>
-                          <TableCell className="font-mono">
-                            {plugin.version}
-                          </TableCell>
-                          <TableCell>
-                            {new Date(plugin.released_at).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">
-                            {plugin.checksum?.slice(0, 16)}...
-                          </TableCell>
-                          <TableCell>
-                            {plugin.is_latest ? (
-                              <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">Latest</Badge>
-                            ) : (
-                              <Badge variant="secondary">Previous</Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ))}
+                    )
+                  })}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
@@ -321,12 +349,12 @@ export function Plugins() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="changelog">Changelog</Label>
-              <textarea
+              <Textarea
                 id="changelog"
-                className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-text"
                 placeholder="What's new in this version..."
                 value={changelog}
                 onChange={(e) => setChangelog(e.target.value)}
+                className="min-h-[100px] cursor-text"
               />
             </div>
             <div className="space-y-2">

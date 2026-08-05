@@ -19,6 +19,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   IconReceipt,
   IconAlertTriangle,
   IconRefresh,
@@ -358,14 +365,15 @@ export function Logs() {
                       className="pl-8 w-full sm:w-64 cursor-text"
                     />
                   </div>
-                  <select
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value)}
-                    className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm cursor-pointer"
-                  >
-                    <option value="newest">Newest first</option>
-                    <option value="oldest">Oldest first</option>
-                  </select>
+                  <Select value={sort} onValueChange={setSort}>
+                    <SelectTrigger className="w-[160px] cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Newest first</SelectItem>
+                      <SelectItem value="oldest">Oldest first</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button onClick={exportCSV} variant="outline" size="sm" className="cursor-pointer">
                     <IconDownload className="mr-2 h-4 w-4" />
                     CSV

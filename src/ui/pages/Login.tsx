@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { IconEye, IconEyeOff } from "@tabler/icons-react"
 
 interface LoginResponse {
@@ -113,12 +114,11 @@ export function Login() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <input
+              <Checkbox
                 id="rememberMe"
-                type="checkbox"
                 checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-input cursor-pointer"
+                onCheckedChange={(val) => setRememberMe(val === true)}
+                className="cursor-pointer"
               />
               <Label htmlFor="rememberMe" className="text-sm font-normal cursor-pointer">
                 Remember me
