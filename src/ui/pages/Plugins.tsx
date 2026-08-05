@@ -160,7 +160,7 @@ export function Plugins() {
           <h1 className="text-3xl font-bold tracking-tight">Plugins</h1>
           <p className="text-muted-foreground">Manage plugin versions</p>
         </div>
-        <Button onClick={() => setUploadDialogOpen(true)}>
+        <Button onClick={() => setUploadDialogOpen(true)} className="cursor-pointer">
           <Upload className="mr-2 h-4 w-4" />
           Upload Plugin
         </Button>
@@ -293,7 +293,7 @@ export function Plugins() {
               <div
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
-                className={`flex flex-col items-center justify-center rounded-md border-2 border-dashed p-6 transition-colors ${
+                className={`flex flex-col items-center justify-center rounded-md border-2 border-dashed p-6 transition-colors cursor-pointer ${
                   file
                     ? "border-green-500 bg-green-500/10"
                     : "border-muted-foreground/25 hover:border-muted-foreground/50"
@@ -315,7 +315,7 @@ export function Plugins() {
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="text-primary underline"
+                        className="text-primary underline cursor-pointer"
                       >
                         browse
                       </button>
@@ -339,12 +339,14 @@ export function Plugins() {
             <Button
               variant="outline"
               onClick={() => setUploadDialogOpen(false)}
+              className="cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={handleUpload}
               disabled={!file || !slug || !version || uploading}
+              className="cursor-pointer"
             >
               {uploading ? "Uploading..." : "Upload"}
             </Button>

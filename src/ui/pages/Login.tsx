@@ -72,7 +72,7 @@ export function Login() {
     <div className="flex min-h-screen items-center justify-center bg-muted/40">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">ChatLoka Admin</CardTitle>
+          <CardTitle className="text-2xl font-bold">Chatloka</CardTitle>
           <CardDescription>
             Enter your credentials to access the admin panel
           </CardDescription>
@@ -111,7 +111,7 @@ export function Login() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowPassword(!showPassword)}
                   tabIndex={-1}
                 >
@@ -129,7 +129,7 @@ export function Login() {
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-input"
+                className="h-4 w-4 rounded border-input cursor-pointer"
               />
               <Label htmlFor="rememberMe" className="text-sm font-normal cursor-pointer">
                 Remember me
@@ -144,7 +144,7 @@ export function Login() {
                 options={{ size: "normal" }}
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full cursor-pointer" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
             </Button>
           </form>

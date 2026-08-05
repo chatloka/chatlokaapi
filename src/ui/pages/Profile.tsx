@@ -177,7 +177,7 @@ export function Profile() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                   tabIndex={-1}
                 >
@@ -207,7 +207,7 @@ export function Profile() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowNewPassword(!showNewPassword)}
                   tabIndex={-1}
                 >
@@ -237,7 +237,7 @@ export function Profile() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   tabIndex={-1}
                 >
@@ -250,7 +250,7 @@ export function Profile() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full" disabled={submitting}>
+            <Button type="submit" className="w-full cursor-pointer" disabled={submitting}>
               {submitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

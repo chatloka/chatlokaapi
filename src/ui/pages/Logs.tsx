@@ -102,11 +102,11 @@ export function Logs() {
 
       <Tabs defaultValue="api">
         <TabsList>
-          <TabsTrigger value="api" className="gap-2">
+          <TabsTrigger value="api" className="gap-2 cursor-pointer">
             <ScrollText className="h-4 w-4" />
             API Logs
           </TabsTrigger>
-          <TabsTrigger value="tamper" className="gap-2">
+          <TabsTrigger value="tamper" className="gap-2 cursor-pointer">
             <AlertTriangle className="h-4 w-4" />
             Tamper Attempts
           </TabsTrigger>

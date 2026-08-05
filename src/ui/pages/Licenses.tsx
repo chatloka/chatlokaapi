@@ -218,7 +218,7 @@ export function Licenses() {
           <h1 className="text-3xl font-bold tracking-tight">Licenses</h1>
           <p className="text-muted-foreground">Manage license activations</p>
         </div>
-        <Button onClick={() => setCreateDialogOpen(true)}>
+        <Button onClick={() => setCreateDialogOpen(true)} className="cursor-pointer">
           <Plus className="mr-2 h-4 w-4" />
           Add License
         </Button>
@@ -243,7 +243,7 @@ export function Licenses() {
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value)}
-              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer"
             >
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
@@ -290,8 +290,8 @@ export function Licenses() {
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
-                          <DropdownMenuTrigger>
-                            <Button variant="ghost" size="icon">
+                          <DropdownMenuTrigger className="cursor-pointer">
+                            <Button variant="ghost" size="icon" className="cursor-pointer">
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -302,6 +302,7 @@ export function Licenses() {
                                 setNewDomain(license.domain)
                                 setEditDialogOpen(true)
                               }}
+                              className="cursor-pointer"
                             >
                               Change Domain
                             </DropdownMenuItem>
@@ -311,6 +312,7 @@ export function Licenses() {
                                   onClick={() =>
                                     handleStatusChange(license.id, "deactivated")
                                   }
+                                  className="cursor-pointer"
                                 >
                                   Deactivate
                                 </DropdownMenuItem>
@@ -318,7 +320,7 @@ export function Licenses() {
                                   onClick={() =>
                                     handleStatusChange(license.id, "suspended")
                                   }
-                                  className="text-destructive"
+                                  className="text-destructive cursor-pointer"
                                 >
                                   Suspend
                                 </DropdownMenuItem>
@@ -328,6 +330,7 @@ export function Licenses() {
                                 onClick={() =>
                                   handleStatusChange(license.id, "active")
                                 }
+                                className="cursor-pointer"
                               >
                                 Enable
                               </DropdownMenuItem>
@@ -366,10 +369,10 @@ export function Licenses() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)} className="cursor-pointer">
               Cancel
             </Button>
-            <Button onClick={handleDomainChange}>Save Changes</Button>
+            <Button onClick={handleDomainChange} className="cursor-pointer">Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -439,12 +442,14 @@ export function Licenses() {
             <Button
               variant="outline"
               onClick={() => setCreateDialogOpen(false)}
+              className="cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={handleCreateLicense}
               disabled={!createPurchaseCode || !createDomain}
+              className="cursor-pointer"
             >
               Create License
             </Button>
