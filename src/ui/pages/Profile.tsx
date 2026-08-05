@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/avatar"
 import { IconUser, IconEye, IconEyeOff, IconDeviceFloppy, IconLoader2 } from "@tabler/icons-react"
 import { toast } from "sonner"
+import { Skeleton } from "@/components/ui/skeleton"
 
 interface UserProfile {
   id: string
@@ -108,8 +109,30 @@ export function Profile() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-6">
+        <div>
+          <Skeleton className="h-8 w-32" />
+          <Skeleton className="h-4 w-48 mt-2" />
+        </div>
+        <div className="rounded-lg border p-6">
+          <Skeleton className="h-5 w-28 mb-4" />
+          <div className="flex items-center gap-4">
+            <Skeleton className="h-16 w-16 rounded-full" />
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-4 w-48" />
+            </div>
+          </div>
+        </div>
+        <div className="rounded-lg border p-6">
+          <Skeleton className="h-5 w-36 mb-4" />
+          <div className="space-y-4">
+            <div className="space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-10 w-full" /></div>
+            <div className="space-y-2"><Skeleton className="h-4 w-28" /><Skeleton className="h-10 w-full" /></div>
+            <div className="space-y-2"><Skeleton className="h-4 w-36" /><Skeleton className="h-10 w-full" /></div>
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </div>
       </div>
     )
   }
