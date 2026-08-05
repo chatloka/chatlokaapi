@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createAuth } from "../auth";
+import { AppUpdateService } from "../services/appUpdate";
 import type { CloudflareBindings } from "../types";
 
 export interface AdminVariables {
@@ -406,6 +407,148 @@ adminRoutes.get("/plugins/:slug/download", async (c) => {
       "Content-Disposition": `attachment; filename="${slug}-${plugin.version}.zip"`,
       "X-Checksum-SHA256": plugin.checksum,
       ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
+    },
+  });
+});
+
+// ============================================
+// App Versions (Auto-Update System)
+// ============================================
+
+// List all app versions with pagination
+adminRoutes.get("/app-versions", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
+  const search = c.req.query("search") || "";
+
+  const appUpdateService = new AppUpdateService(db);
+  const { versions, total } = await appUpdateService.getVersionsPaginated(page, limit, search || undefined);
+
+  return c.json({
+    versions,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+// Get single app version detail
+adminRoutes.get("/app-versions/:version", async (c) => {
+  const db = c.env.DB;
+  const version = c.req.param("version");
+
+  const appUpdateService = new AppUpdateService(db);
+  const appVersion = await appUpdateService.getVersionByVersion(version);
+
+  if (!appVersion) {
+    return c.json({ error: "Version not found" }, 404);
+  }
+
+  return c.json({ version: appVersion });
+});
+
+// Upload new app version
+adminRoutes.post("/app-versions/upload", async (c) => {
+  const db = c.env.DB;
+  const bucket = c.env.PLUGINS_BUCKET;
+  const session = c.get("session");
+
+  const formData = await c.req.formData();
+  const file = formData.get("file") as File | null;
+  const version = formData.get("version") as string | null;
+  const changelog = formData.get("changelog") as string | null;
+  const breakingChanges = formData.get("breaking_changes") as string | null;
+  const minPhpVersion = formData.get("min_php_version") as string | null;
+
+  if (!file || !version) {
+    return c.json({ error: "Missing required fields: file, version" }, 400);
+  }
+
+  if (!file.name.endsWith(".zip")) {
+    return c.json({ error: "File must be a .zip file" }, 400);
+  }
+
+  // Validate semver format
+  if (!/^\d+\.\d+\.\d+/.test(version)) {
+    return c.json({ error: "Version must be in semver format (e.g. 1.3.0)" }, 400);
+  }
+
+  const appUpdateService = new AppUpdateService(db);
+
+  // Check if version already exists
+  const existing = await appUpdateService.getVersionByVersion(version);
+  if (existing) {
+    return c.json({ error: "Version already exists" }, 409);
+  }
+
+  // Calculate checksum
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const checksum = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  // Upload to R2
+  const zipPath = `app-releases/${version}/chatloka-${version}.zip`;
+  await bucket.put(zipPath, file);
+
+  // Insert into database
+  await appUpdateService.createVersion({
+    version,
+    changelog: changelog || undefined,
+    zip_path: zipPath,
+    checksum,
+    file_size: file.size,
+    min_php_version: minPhpVersion || undefined,
+    breaking_changes: breakingChanges || undefined,
+    created_by: session?.user?.id || undefined,
+  });
+
+  return c.json({
+    success: true,
+    version,
+    zip_path: zipPath,
+    checksum,
+    file_size: file.size,
+  });
+});
+
+// Delete an app version (cannot delete latest)
+adminRoutes.delete("/app-versions/:version", async (c) => {
+  const db = c.env.DB;
+  const version = c.req.param("version");
+
+  const appUpdateService = new AppUpdateService(db);
+  const deleted = await appUpdateService.deleteVersion(version);
+
+  if (!deleted) {
+    return c.json({ error: "Cannot delete the latest version" }, 400);
+  }
+
+  return c.json({ success: true });
+});
+
+// Get app update logs
+adminRoutes.get("/app-update-logs", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const search = c.req.query("search") || "";
+
+  const appUpdateService = new AppUpdateService(db);
+  const { logs, total } = await appUpdateService.getUpdateLogs(page, limit, search || undefined);
+
+  return c.json({
+    logs,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
     },
   });
 });

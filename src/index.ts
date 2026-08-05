@@ -4,6 +4,7 @@ import { LicenseService } from './services/license'
 import { EnvatoService } from './services/envato'
 import { SignatureService } from './services/signature'
 import { PluginService } from './services/plugin'
+import { AppUpdateService } from './services/appUpdate'
 import { requireValidLicense, type LicenseContextVariables } from './middleware/requireValidLicense'
 import { getClientIp } from './http'
 import { signHs256, verifyHs256 } from './services/jwt'
@@ -588,41 +589,234 @@ app.get('/downloads/:filename', async (c) => {
     return c.json({ error: 'token_invalid', message: e?.message || 'Invalid or expired token' }, 401)
   }
 
-  if (payload.iss !== 'api.chaton.pro') return c.json({ error: 'token_invalid', message: 'Invalid token issuer' }, 401)
+  // Check issuer - support both plugin tokens and app update tokens
+  const validIssuers = ['api.chaton.pro', 'api.chatloka.net']
+  if (!validIssuers.includes(payload.iss)) return c.json({ error: 'token_invalid', message: 'Invalid token issuer' }, 401)
 
   const db = c.env.DB
-  const pluginService = new PluginService(db, c.env.API_BASE_URL || new URL(c.req.url).origin)
+  const isAppUpdate = payload.type === 'app-update'
 
-  const alreadyUsed = await pluginService.isTokenUsed(payload.jti)
-  if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This download token has already been used' }, 401)
+  if (isAppUpdate) {
+    // App update download flow
+    const appUpdateService = new AppUpdateService(db)
 
-  const expectedFilename = `${payload.slug}-${payload.version}.zip`
-  if (filename !== expectedFilename) return c.json({ error: 'filename_mismatch', message: 'Filename does not match the download token' }, 403)
+    const alreadyUsed = await appUpdateService.isTokenUsed(payload.jti)
+    if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This download token has already been used' }, 401)
 
-  const pluginInfo = await pluginService.getPluginBySlugAndVersion(payload.slug, payload.version)
-  if (!pluginInfo) return c.json({ error: 'plugin_not_found', message: 'Plugin version not found in database' }, 404)
+    const expectedFilename = `chatloka-${payload.version}.zip`
+    if (filename !== expectedFilename) return c.json({ error: 'filename_mismatch', message: 'Filename does not match the download token' }, 403)
 
-  const object = await c.env.PLUGINS_BUCKET.get(pluginInfo.zip_path)
-  if (!object || !object.body) return c.json({ error: 'file_not_found', message: `Plugin file '${filename}' is not available on server` }, 404)
+    const appVersion = await appUpdateService.getVersionByVersion(payload.version)
+    if (!appVersion) return c.json({ error: 'version_not_found', message: 'App version not found in database' }, 404)
 
-  await pluginService.markTokenAsUsed(payload.jti, new Date(payload.exp * 1000))
-  await pluginService.logDownload({
-    purchase_code: payload.sub,
-    slug: payload.slug,
-    version: payload.version,
-    domain: payload.domain,
-    ip_address: getClientIp(c),
-  })
+    const object = await c.env.PLUGINS_BUCKET.get(appVersion.zip_path)
+    if (!object || !object.body) return c.json({ error: 'file_not_found', message: `App file '${filename}' is not available on server` }, 404)
 
-  return new Response(object.body, {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'X-Checksum-SHA256': pluginInfo.checksum,
-      ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
-    },
-  })
+    await appUpdateService.markTokenAsUsed(payload.jti, new Date(payload.exp * 1000))
+
+    return new Response(object.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Checksum-SHA256': appVersion.checksum,
+        ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
+      },
+    })
+  } else {
+    // Plugin download flow (existing)
+    const pluginService = new PluginService(db, c.env.API_BASE_URL || new URL(c.req.url).origin)
+
+    const alreadyUsed = await pluginService.isTokenUsed(payload.jti)
+    if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This download token has already been used' }, 401)
+
+    const expectedFilename = `${payload.slug}-${payload.version}.zip`
+    if (filename !== expectedFilename) return c.json({ error: 'filename_mismatch', message: 'Filename does not match the download token' }, 403)
+
+    const pluginInfo = await pluginService.getPluginBySlugAndVersion(payload.slug, payload.version)
+    if (!pluginInfo) return c.json({ error: 'plugin_not_found', message: 'Plugin version not found in database' }, 404)
+
+    const object = await c.env.PLUGINS_BUCKET.get(pluginInfo.zip_path)
+    if (!object || !object.body) return c.json({ error: 'file_not_found', message: `Plugin file '${filename}' is not available on server` }, 404)
+
+    await pluginService.markTokenAsUsed(payload.jti, new Date(payload.exp * 1000))
+    await pluginService.logDownload({
+      purchase_code: payload.sub,
+      slug: payload.slug,
+      version: payload.version,
+      domain: payload.domain,
+      ip_address: getClientIp(c),
+    })
+
+    return new Response(object.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Checksum-SHA256': pluginInfo.checksum,
+        ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
+      },
+    })
+  }
+})
+
+// ============================================
+// App Update System (Public API)
+// ============================================
+
+// Check for application update
+app.post('/api/app/check-update', requireValidLicense, async (c) => {
+  try {
+    const body = await c.req.json<{ current_version: string; domain: string }>()
+    const { current_version, domain } = body
+
+    if (!current_version) return c.json({ error: 'invalid_request', message: 'current_version is required' }, 400)
+    if (!domain) return c.json({ error: 'invalid_request', message: 'domain is required' }, 400)
+
+    const license = c.get('license')
+
+    // Verify domain matches license
+    if (license.domain !== domain) {
+      return c.json({ error: 'domain_mismatch', message: 'Domain does not match license' }, 403)
+    }
+
+    const db = c.env.DB
+    const appUpdateService = new AppUpdateService(db)
+    const signatureService = new SignatureService(c.env.RSA_PRIVATE_KEY)
+
+    const latest = await appUpdateService.getLatestVersion()
+
+    if (!latest) {
+      return c.json(await signatureService.createSignedResponse({
+        has_update: false,
+        current_version,
+        latest_version: current_version,
+      }))
+    }
+
+    const hasUpdate = appUpdateService.compareVersions(latest.version, current_version) > 0
+
+    const responseData: Record<string, unknown> = {
+      has_update: hasUpdate,
+      current_version,
+      latest_version: latest.version,
+    }
+
+    if (hasUpdate) {
+      responseData.changelog = latest.changelog
+      responseData.download_url = appUpdateService.getDownloadUrl(latest.version)
+      responseData.checksum = latest.checksum
+      responseData.file_size = latest.file_size
+      responseData.released_at = latest.released_at
+      responseData.breaking_changes = latest.breaking_changes ? JSON.parse(latest.breaking_changes) : []
+      responseData.min_php_version = latest.min_php_version
+    }
+
+    return c.json(await signatureService.createSignedResponse(responseData))
+  } catch {
+    return c.json({ error: 'server_error', message: 'Internal server error' }, 500)
+  }
+})
+
+// Generate download token for app update
+app.post('/api/app/download-token', requireValidLicense, async (c) => {
+  try {
+    const limited = await enforceRateLimit(c, c.env.RL_PLUGIN_TOKEN, 'app-download-token')
+    if (limited) return limited
+
+    const body = await c.req.json<{ version: string; domain: string }>()
+    const { version, domain } = body
+
+    if (!version) return c.json({ error: 'invalid_request', message: 'version is required' }, 400)
+    if (!domain) return c.json({ error: 'invalid_request', message: 'domain is required' }, 400)
+
+    const purchaseCode = c.get('purchaseCode')
+    const license = c.get('license')
+
+    // Verify domain matches license
+    if (license.domain !== domain) {
+      return c.json({ error: 'domain_mismatch', message: 'Domain does not match license' }, 403)
+    }
+
+    const db = c.env.DB
+    const appUpdateService = new AppUpdateService(db)
+    const signatureService = new SignatureService(c.env.RSA_PRIVATE_KEY)
+
+    const appVersion = await appUpdateService.getVersionByVersion(version)
+    if (!appVersion) return c.json({ error: 'version_not_found', message: `Version '${version}' not found` }, 404)
+    if (!appVersion.checksum) return c.json({ error: 'version_unavailable', message: `Version '${version}' is not available for download` }, 503)
+
+    const jti = crypto.randomUUID()
+    const exp = Math.floor(Date.now() / 1000) + 3600
+    const token = await signHs256(
+      {
+        sub: purchaseCode,
+        type: 'app-update',
+        version: appVersion.version,
+        domain,
+        jti,
+        iss: 'api.chatloka.net',
+        exp,
+      },
+      c.env.DOWNLOAD_TOKEN_SECRET,
+    )
+
+    const filename = `chatloka-${appVersion.version}.zip`
+    const downloadUrl = appUpdateService.getDownloadUrl(appVersion.version)
+
+    return c.json(await signatureService.createSignedResponse({
+      token,
+      expires_at: new Date(exp * 1000).toISOString(),
+      download_url: downloadUrl,
+      checksum: appVersion.checksum,
+      filename,
+      file_size: appVersion.file_size,
+    }))
+  } catch {
+    return c.json({ error: 'server_error', message: 'Internal server error' }, 500)
+  }
+})
+
+// Report update result
+app.post('/api/app/update-result', requireValidLicense, async (c) => {
+  try {
+    const body = await c.req.json<{
+      from_version: string
+      to_version: string
+      status: string
+      domain: string
+      error_message?: string
+    }>()
+
+    const { from_version, to_version, status, domain, error_message } = body
+
+    if (!from_version || !to_version || !status || !domain) {
+      return c.json({ error: 'invalid_request', message: 'from_version, to_version, status, and domain are required' }, 400)
+    }
+
+    if (!['success', 'failed', 'rollback'].includes(status)) {
+      return c.json({ error: 'invalid_request', message: 'status must be success, failed, or rollback' }, 400)
+    }
+
+    const purchaseCode = c.get('purchaseCode')
+    const db = c.env.DB
+    const appUpdateService = new AppUpdateService(db)
+
+    await appUpdateService.logUpdate({
+      purchase_code: purchaseCode,
+      domain,
+      from_version,
+      to_version,
+      status,
+      error_message: error_message || undefined,
+      ip_address: getClientIp(c),
+      user_agent: c.req.header('user-agent'),
+    })
+
+    return c.json({ success: true })
+  } catch {
+    return c.json({ error: 'server_error', message: 'Internal server error' }, 500)
+  }
 })
 
 // Better Auth handler
