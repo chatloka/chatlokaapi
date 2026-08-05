@@ -1,4 +1,4 @@
-import type { License, LicenseType, ValidationType } from '../types'
+import type { EnvatoPurchase, License, LicenseType, ValidationType } from '../types'
 import { all, first, run } from './d1'
 
 type ChecksumRow = { file_path: string; checksum_md5: string }
@@ -56,6 +56,31 @@ export class LicenseService {
   async reactivateLicense(licenseId: number, domain: string): Promise<void> {
     const now = new Date().toISOString()
     await run(this.db, "UPDATE licenses SET domain = ?, status = 'active', activated_at = ?, updated_at = ? WHERE id = ?", domain, now, now, licenseId)
+  }
+
+  async upsertDeactivatedLicense(purchaseCode: string, envato: EnvatoPurchase): Promise<License> {
+    const now = new Date().toISOString()
+    await run(
+      this.db,
+      `INSERT INTO licenses (purchase_code, license_type, domain, buyer_email, buyer_name, item_id, item_name, purchase_date, support_until, activated_at, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'deactivated', ?, ?)
+       ON CONFLICT(purchase_code) DO NOTHING`,
+      purchaseCode,
+      envato.license,
+      '__pending_activation__',
+      envato.buyer || null,
+      null,
+      envato.item?.id?.toString() || null,
+      envato.item?.name || null,
+      envato.sold_at || null,
+      envato.supported_until || null,
+      now,
+      now,
+      now,
+    )
+    const row = await this.getLicenseByPurchaseCode(purchaseCode)
+    if (!row) throw new Error('Failed to upsert deactivated license')
+    return row
   }
 
   async deactivateLicense(purchaseCode: string, domain: string): Promise<boolean> {

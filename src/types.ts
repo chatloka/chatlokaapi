@@ -5,6 +5,7 @@ export type ValidationType = 'activate' | 'validate' | 'deactivate'
 export interface CloudflareBindings {
   DB: D1Database
   ENVATO_PERSONAL_TOKEN: string
+  ENVATO_API_URL?: string
   RSA_PRIVATE_KEY: string
   DOWNLOAD_TOKEN_SECRET: string
   API_BASE_URL?: string
@@ -13,6 +14,7 @@ export interface CloudflareBindings {
   RL_VALIDATE: RateLimit
   RL_ACTIVATE: RateLimit
   RL_DEACTIVATE: RateLimit
+  RL_VERIFY: RateLimit
   RL_PLUGIN_TOKEN: RateLimit
   RL_PLUGIN_DOWNLOAD: RateLimit
 }
@@ -49,11 +51,17 @@ export interface EnvatoPurchase {
 
 export interface EnvatoVerificationResponse {
   valid: boolean
+  revoked?: boolean
   purchase?: EnvatoPurchase
   error?: string
 }
 
 export interface ActivateRequest {
+  purchase_code: string
+  domain: string
+}
+
+export interface VerifyRequest {
   purchase_code: string
   domain: string
 }

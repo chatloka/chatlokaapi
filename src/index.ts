@@ -14,6 +14,7 @@ import type {
   DeactivateRequest,
   DownloadTokenRequest,
   ValidateRequest,
+  VerifyRequest,
 } from './types'
 import type { Context } from 'hono'
 
@@ -37,6 +38,37 @@ async function enforceRateLimit(c: Context, limiter: RateLimit, scope: string) {
   return null
 }
 
+async function enforceRateLimitByPurchaseCode(c: Context, limiter: RateLimit, scope: string, purchaseCode: string) {
+  const ip = c.req.header('cf-connecting-ip') || 'unknown-ip'
+  const safeKey = (purchaseCode || 'anon').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const key = `${scope}:${safeKey}:${ip}`
+  const { success } = await limiter.limit({ key })
+  if (!success) {
+    return c.json(
+      {
+        success: false,
+        message: 'Too many requests',
+        error_code: 'RATE_LIMITED',
+      },
+      429,
+    )
+  }
+  return null
+}
+
+function maskDomain(domain: string): string {
+  if (!domain) return ''
+  const parts = domain.split('.')
+  if (parts.length < 2) return domain
+  const tld = parts[parts.length - 1]
+  const sld = parts[parts.length - 2]
+  if (sld.length <= 2) return `**.**.${tld}`
+  const visible = sld.slice(0, 2)
+  const masked = '*'.repeat(Math.max(sld.length - 2, 1))
+  const head = parts.length > 2 ? `${parts.slice(0, -2).join('.')}.` : ''
+  return `${head}${visible}${masked}.${tld}`
+}
+
 app.use('/*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'OPTIONS'],
@@ -45,10 +77,8 @@ app.use('/*', cors({
 
 app.get('/', (c) => {
   return c.json({
-    name: 'ChatLoka License Worker',
-    version: '1.0.0',
-    status: 'operational',
-    environment: c.env.ENVIRONMENT || 'production',
+    status: 'API Operational',
+    timestamp: new Date().toISOString(),
   })
 })
 
@@ -145,6 +175,116 @@ app.post('/api/activate', async (c) => {
     return c.json(await signatureService.createSignedResponse(responseData))
   } catch {
     return c.json({ success: false, message: 'Internal server error' }, 500)
+  }
+})
+
+app.post('/api/verify', async (c) => {
+  try {
+    let body: VerifyRequest
+    try {
+      body = await c.req.json<VerifyRequest>()
+    } catch {
+      return c.json({ success: false, message: 'Invalid JSON body', error_code: 'INVALID_REQUEST' }, 400)
+    }
+
+    const { purchase_code, domain } = body
+    if (!purchase_code || !domain) {
+      return c.json({ success: false, message: 'Purchase code and domain are required', error_code: 'INVALID_REQUEST' }, 400)
+    }
+
+    const limited = await enforceRateLimitByPurchaseCode(c, c.env.RL_VERIFY, 'verify', purchase_code)
+    if (limited) return limited
+
+    const db = c.env.DB
+    const licenseService = new LicenseService(db)
+    const envatoService = new EnvatoService(c.env)
+    const signatureService = new SignatureService(c.env.RSA_PRIVATE_KEY)
+
+    const existingLicense = await licenseService.getLicenseByPurchaseCode(purchase_code)
+
+    if (existingLicense && existingLicense.status === 'active' && existingLicense.domain && existingLicense.domain !== domain) {
+      const responseData = {
+        success: false,
+        valid: false,
+        purchase_code_valid: true,
+        domain_available: false,
+        already_activated_here: false,
+        license_type: existingLicense.license_type,
+        error_code: 'DOMAIN_IN_USE',
+        bound_domain_masked: maskDomain(existingLicense.domain),
+        message: 'This purchase code is already activated on another domain. Please deactivate it first.',
+      }
+      return c.json(await signatureService.createSignedResponse(responseData))
+    }
+
+    if (existingLicense && existingLicense.status === 'suspended') {
+      const responseData = {
+        success: false,
+        valid: false,
+        purchase_code_valid: true,
+        domain_available: false,
+        already_activated_here: false,
+        license_type: existingLicense.license_type,
+        error_code: 'LICENSE_REVOKED',
+        message: 'This license has been suspended or revoked.',
+      }
+      return c.json(await signatureService.createSignedResponse(responseData))
+    }
+
+    let envatoData = await licenseService.getCachedEnvatoResponse(purchase_code)
+    if (!envatoData) {
+      const verification = await envatoService.verifyPurchaseCode(purchase_code)
+      if (verification.revoked) {
+        const responseData = {
+          success: false,
+          valid: false,
+          purchase_code_valid: false,
+          domain_available: false,
+          already_activated_here: false,
+          error_code: 'LICENSE_REVOKED',
+          message: verification.error || 'This purchase code has been revoked or refunded.',
+        }
+        return c.json(await signatureService.createSignedResponse(responseData))
+      }
+      if (!verification.valid || !verification.purchase) {
+        const responseData = {
+          success: false,
+          valid: false,
+          purchase_code_valid: false,
+          domain_available: false,
+          already_activated_here: false,
+          error_code: 'INVALID_PURCHASE_CODE',
+          message: verification.error || 'Invalid purchase code',
+        }
+        return c.json(await signatureService.createSignedResponse(responseData))
+      }
+      envatoData = verification.purchase
+      await licenseService.cacheEnvatoResponse(purchase_code, envatoData, 24)
+    }
+
+    if (!existingLicense || existingLicense.status === 'deactivated') {
+      await licenseService.upsertDeactivatedLicense(purchase_code, envatoData)
+    }
+
+    const licenseType = (existingLicense?.license_type || envatoData.license) as 'regular' | 'extended'
+    const alreadyActivatedHere = Boolean(
+      existingLicense && existingLicense.status === 'active' && existingLicense.domain === domain,
+    )
+
+    const responseData = {
+      success: true,
+      valid: true,
+      purchase_code_valid: true,
+      domain_available: true,
+      already_activated_here: alreadyActivatedHere,
+      license_type: licenseType,
+      message: alreadyActivatedHere
+        ? 'License is already activated on this domain. Re-installation is allowed.'
+        : 'License is valid and available for activation on this domain.',
+    }
+    return c.json(await signatureService.createSignedResponse(responseData))
+  } catch {
+    return c.json({ success: false, message: 'Internal server error', error_code: 'INTERNAL_ERROR' }, 500)
   }
 })
 

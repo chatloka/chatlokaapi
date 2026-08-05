@@ -5,7 +5,8 @@
   "compatibility_date": "2026-05-20",
   "vars": {
     "ENVIRONMENT": "production",
-    "API_BASE_URL": "https://api.chatloka.net"
+    "API_BASE_URL": "https://api.chatloka.net",
+    "ENVATO_API_URL": "https://envatoapi.chatloka.net/v3/market"
   },
   "secrets": {
     "required": [
@@ -41,6 +42,14 @@
     {
       "name": "RL_ACTIVATE",
       "namespace_id": "21002",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "RL_VERIFY",
+      "namespace_id": "21006",
       "simple": {
         "limit": 10,
         "period": 60
