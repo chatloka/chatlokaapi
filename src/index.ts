@@ -583,7 +583,7 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 app.route('/manage/api', adminRoutes)
 
 // SPA fallback - serve assets for non-API routes
-app.get('*', async (c) => {
+app.all('*', async (c) => {
   const url = new URL(c.req.url)
   if (!url.pathname.startsWith('/api/')) {
     return c.env.ASSETS.fetch(c.req.raw)
