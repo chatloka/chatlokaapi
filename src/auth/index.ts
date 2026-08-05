@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { captcha } from "better-auth/plugins";
 
 const ITERATIONS = 100_000;
 const KEY_LENGTH = 32;
@@ -68,6 +69,7 @@ export function createAuth(env: {
   DB: D1Database;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL: string;
+  TURNSTILE_SECRET_KEY: string;
 }) {
   return betterAuth({
     baseURL: env.BETTER_AUTH_URL,
@@ -86,6 +88,12 @@ export function createAuth(env: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
     },
+    plugins: [
+      captcha({
+        provider: "cloudflare-turnstile",
+        secretKey: env.TURNSTILE_SECRET_KEY,
+      }),
+    ],
   });
 }
 

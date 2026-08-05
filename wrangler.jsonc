@@ -21,14 +21,16 @@
     "ENVIRONMENT": "production",
     "API_BASE_URL": "https://api.chatloka.net",
     "ENVATO_API_URL": "https://envatoapi.chatloka.net/v3/market",
-    "BETTER_AUTH_URL": "https://api.chatloka.net"
+    "BETTER_AUTH_URL": "https://api.chatloka.net",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM"
   },
   "secrets": {
     "required": [
       "DOWNLOAD_TOKEN_SECRET",
       "RSA_PRIVATE_KEY",
       "ENVATO_PERSONAL_TOKEN",
-      "BETTER_AUTH_SECRET"
+      "BETTER_AUTH_SECRET",
+      "TURNSTILE_SECRET_KEY"
     ]
   },
   "d1_databases": [

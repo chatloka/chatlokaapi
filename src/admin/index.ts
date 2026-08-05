@@ -61,6 +61,46 @@ adminRoutes.get("/stats", async (c) => {
 });
 
 // Licenses endpoints
+adminRoutes.post("/licenses", async (c) => {
+  const db = c.env.DB;
+  const body = await c.req.json<{
+    purchase_code: string;
+    license_type?: string;
+    domain: string;
+    buyer_email?: string;
+    buyer_name?: string;
+  }>();
+
+  if (!body.purchase_code || !body.domain) {
+    return c.json({ error: "purchase_code and domain are required" }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const licenseType = body.license_type || "regular";
+
+  if (!["regular", "extended", "lifetime"].includes(licenseType)) {
+    return c.json({ error: "Invalid license_type" }, 400);
+  }
+
+  await db.prepare(
+    `INSERT INTO licenses (purchase_code, license_type, domain, buyer_email, buyer_name, activated_at, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`
+  )
+    .bind(
+      body.purchase_code,
+      licenseType,
+      body.domain,
+      body.buyer_email || null,
+      body.buyer_name || null,
+      now,
+      now,
+      now
+    )
+    .run();
+
+  return c.json({ success: true }, 201);
+});
+
 adminRoutes.get("/licenses", async (c) => {
   const db = c.env.DB;
   const result = await db.prepare("SELECT * FROM licenses ORDER BY created_at DESC").all();

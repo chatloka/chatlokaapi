@@ -12,6 +12,8 @@ export interface CloudflareBindings {
   BETTER_AUTH_URL: string
   API_BASE_URL?: string
   ENVIRONMENT?: string
+  TURNSTILE_SECRET_KEY: string
+  TURNSTILE_SITE_KEY: string
   PLUGINS_BUCKET: R2Bucket
   ASSETS: Fetcher
   RL_VALIDATE: RateLimit

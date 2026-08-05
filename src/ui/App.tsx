@@ -6,6 +6,7 @@ import { Dashboard } from "./pages/Dashboard"
 import { Licenses } from "./pages/Licenses"
 import { Plugins } from "./pages/Plugins"
 import { Logs } from "./pages/Logs"
+import { Profile } from "./pages/Profile"
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
         <Route path="licenses" element={<Licenses />} />
         <Route path="plugins" element={<Plugins />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="/" element={<Navigate to="/manage" replace />} />
       <Route path="*" element={<Navigate to="/manage" replace />} />

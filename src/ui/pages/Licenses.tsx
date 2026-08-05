@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Card,
   CardContent,
@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { toast } from "sonner"
 
 interface License {
   id: number
@@ -44,6 +45,8 @@ interface License {
   status: string
   activated_at: string
   last_validated_at: string
+  created_at: string
+  updated_at: string
 }
 
 interface LicensesResponse {
@@ -54,9 +57,17 @@ export function Licenses() {
   const [licenses, setLicenses] = useState<License[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [sort, setSort] = useState("newest")
   const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [selectedLicense, setSelectedLicense] = useState<License | null>(null)
   const [newDomain, setNewDomain] = useState("")
+
+  const [createPurchaseCode, setCreatePurchaseCode] = useState("")
+  const [createLicenseType, setCreateLicenseType] = useState("regular")
+  const [createDomain, setCreateDomain] = useState("")
+  const [createBuyerEmail, setCreateBuyerEmail] = useState("")
+  const [createBuyerName, setCreateBuyerName] = useState("")
 
   useEffect(() => {
     fetchLicenses()
@@ -75,6 +86,41 @@ export function Licenses() {
       console.error("Failed to fetch licenses:", error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleCreateLicense() {
+    if (!createPurchaseCode || !createDomain) return
+
+    try {
+      const res = await fetch("/manage/api/licenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          purchase_code: createPurchaseCode,
+          license_type: createLicenseType,
+          domain: createDomain,
+          buyer_email: createBuyerEmail || undefined,
+          buyer_name: createBuyerName || undefined,
+        }),
+      })
+      if (res.ok) {
+        setCreateDialogOpen(false)
+        setCreatePurchaseCode("")
+        setCreateLicenseType("regular")
+        setCreateDomain("")
+        setCreateBuyerEmail("")
+        setCreateBuyerName("")
+        toast.success("License created")
+        fetchLicenses()
+      } else {
+        const errorData = await res.json().catch(() => ({})) as { message?: string }
+        toast.error(errorData.message || "Failed to create license")
+      }
+    } catch (error) {
+      toast.error("Failed to create license")
+      console.error("Failed to create license:", error)
     }
   }
 
@@ -118,12 +164,39 @@ export function Licenses() {
     }
   }
 
-  const filteredLicenses = licenses.filter(
-    (l) =>
-      l.purchase_code.toLowerCase().includes(search.toLowerCase()) ||
-      l.domain.toLowerCase().includes(search.toLowerCase()) ||
-      l.buyer_email?.toLowerCase().includes(search.toLowerCase())
-  )
+  const filteredLicenses = useMemo(() => {
+    const searched = licenses.filter(
+      (l) =>
+        l.purchase_code.toLowerCase().includes(search.toLowerCase()) ||
+        l.domain.toLowerCase().includes(search.toLowerCase()) ||
+        l.buyer_email?.toLowerCase().includes(search.toLowerCase())
+    )
+
+    switch (sort) {
+      case "newest":
+        return [...searched].sort(
+          (a, b) =>
+            new Date(b.created_at ?? b.activated_at ?? 0).getTime() -
+            new Date(a.created_at ?? a.activated_at ?? 0).getTime()
+        )
+      case "oldest":
+        return [...searched].sort(
+          (a, b) =>
+            new Date(a.created_at ?? a.activated_at ?? 0).getTime() -
+            new Date(b.created_at ?? b.activated_at ?? 0).getTime()
+        )
+      case "status":
+        return [...searched].sort((a, b) =>
+          a.status.localeCompare(b.status)
+        )
+      case "domain":
+        return [...searched].sort((a, b) =>
+          a.domain.localeCompare(b.domain)
+        )
+      default:
+        return searched
+    }
+  }, [licenses, search, sort])
 
   function getStatusBadge(status: string) {
     switch (status) {
@@ -140,12 +213,12 @@ export function Licenses() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Licenses</h1>
           <p className="text-muted-foreground">Manage license activations</p>
         </div>
-        <Button>
+        <Button onClick={() => setCreateDialogOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Add License
         </Button>
@@ -157,14 +230,26 @@ export function Licenses() {
           <CardDescription>
             {licenses.length} total licenses in the system
           </CardDescription>
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by purchase code, domain, or email..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="max-w-sm"
-            />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by purchase code, domain, or email..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="max-w-sm pl-8"
+              />
+            </div>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="status">Status</option>
+              <option value="domain">Domain A-Z</option>
+            </select>
           </div>
         </CardHeader>
         <CardContent>
@@ -173,90 +258,93 @@ export function Licenses() {
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Purchase Code</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Domain</TableHead>
-                  <TableHead>Buyer</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Validated</TableHead>
-                  <TableHead className="w-[70px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLicenses.map((license) => (
-                  <TableRow key={license.id}>
-                    <TableCell className="font-mono text-sm">
-                      {license.purchase_code}
-                    </TableCell>
-                    <TableCell className="capitalize">
-                      {license.license_type}
-                    </TableCell>
-                    <TableCell>{license.domain}</TableCell>
-                    <TableCell>{license.buyer_email || "-"}</TableCell>
-                    <TableCell>{getStatusBadge(license.status)}</TableCell>
-                    <TableCell>
-                      {license.last_validated_at
-                        ? new Date(license.last_validated_at).toLocaleDateString()
-                        : "-"}
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger>
-                          <Button variant="ghost" size="icon">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setSelectedLicense(license)
-                              setNewDomain(license.domain)
-                              setEditDialogOpen(true)
-                            }}
-                          >
-                            Change Domain
-                          </DropdownMenuItem>
-                          {license.status === "active" ? (
-                            <>
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  handleStatusChange(license.id, "deactivated")
-                                }
-                              >
-                                Deactivate
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  handleStatusChange(license.id, "suspended")
-                                }
-                                className="text-destructive"
-                              >
-                                Suspend
-                              </DropdownMenuItem>
-                            </>
-                          ) : (
-                            <DropdownMenuItem
-                              onClick={() =>
-                                handleStatusChange(license.id, "active")
-                              }
-                            >
-                              Enable
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Purchase Code</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Domain</TableHead>
+                    <TableHead>Buyer</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Last Validated</TableHead>
+                    <TableHead className="w-[70px]"></TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredLicenses.map((license) => (
+                    <TableRow key={license.id}>
+                      <TableCell className="font-mono text-sm">
+                        {license.purchase_code}
+                      </TableCell>
+                      <TableCell className="capitalize">
+                        {license.license_type}
+                      </TableCell>
+                      <TableCell>{license.domain}</TableCell>
+                      <TableCell>{license.buyer_email || "-"}</TableCell>
+                      <TableCell>{getStatusBadge(license.status)}</TableCell>
+                      <TableCell>
+                        {license.last_validated_at
+                          ? new Date(license.last_validated_at).toLocaleDateString()
+                          : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger>
+                            <Button variant="ghost" size="icon">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedLicense(license)
+                                setNewDomain(license.domain)
+                                setEditDialogOpen(true)
+                              }}
+                            >
+                              Change Domain
+                            </DropdownMenuItem>
+                            {license.status === "active" ? (
+                              <>
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    handleStatusChange(license.id, "deactivated")
+                                  }
+                                >
+                                  Deactivate
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    handleStatusChange(license.id, "suspended")
+                                  }
+                                  className="text-destructive"
+                                >
+                                  Suspend
+                                </DropdownMenuItem>
+                              </>
+                            ) : (
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  handleStatusChange(license.id, "active")
+                                }
+                              >
+                                Enable
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
 
+      {/* Edit Domain Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -282,6 +370,84 @@ export function Licenses() {
               Cancel
             </Button>
             <Button onClick={handleDomainChange}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create License Dialog */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create License</DialogTitle>
+            <DialogDescription>
+              Add a new license to the system.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="purchase-code">Purchase Code *</Label>
+              <Input
+                id="purchase-code"
+                placeholder="Enter purchase code"
+                value={createPurchaseCode}
+                onChange={(e) => setCreatePurchaseCode(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="license-type">License Type</Label>
+              <select
+                id="license-type"
+                value={createLicenseType}
+                onChange={(e) => setCreateLicenseType(e.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              >
+                <option value="regular">Regular</option>
+                <option value="extended">Extended</option>
+                <option value="lifetime">Lifetime</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="create-domain">Domain *</Label>
+              <Input
+                id="create-domain"
+                placeholder="example.com"
+                value={createDomain}
+                onChange={(e) => setCreateDomain(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="buyer-email">Buyer Email</Label>
+              <Input
+                id="buyer-email"
+                type="email"
+                placeholder="buyer@example.com"
+                value={createBuyerEmail}
+                onChange={(e) => setCreateBuyerEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="buyer-name">Buyer Name</Label>
+              <Input
+                id="buyer-name"
+                placeholder="John Doe"
+                value={createBuyerName}
+                onChange={(e) => setCreateBuyerName(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateLicense}
+              disabled={!createPurchaseCode || !createDomain}
+            >
+              Create License
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
