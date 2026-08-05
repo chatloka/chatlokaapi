@@ -16,6 +16,9 @@ export interface CloudflareBindings {
   TURNSTILE_SITE_KEY: string
   PLUGINS_BUCKET: R2Bucket
   MCP_API_KEY: string
+  RESEND_API_KEY: string
+  RESEND_WEBHOOK_SECRET: string
+  REALTIME_DO: DurableObjectNamespace
   ASSETS: Fetcher
   RL_VALIDATE: RateLimit
   RL_ACTIVATE: RateLimit

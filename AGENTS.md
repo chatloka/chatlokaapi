@@ -132,7 +132,8 @@ chatlokaapi/
 ├── public/
 │   └── favicon.png            # 1024x1024 PNG
 ├── docs/
-│   └── APP_UPDATE_SPEC.md     # Auto-update system specification (for Laravel team)
+│   ├── APP_UPDATE_SPEC.md     # Auto-update system specification (for Laravel team)
+│   └── TICKET_SUPPORT_SPEC.md # Email-based ticket support system specification
 ├── wrangler.jsonc             # Cloudflare Worker config
 ├── vite.config.ts
 ├── tsconfig.json

@@ -48,6 +48,20 @@
       "remote": true
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME_DO",
+        "class_name": "RealtimeHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-realtime",
+      "new_sqlite_classes": ["RealtimeHub"]
+    }
+  ],
   "ratelimits": [
     {
       "name": "RL_VALIDATE",

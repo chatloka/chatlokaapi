@@ -11,6 +11,8 @@ import {
   IconUser,
   IconMenu,
   IconServer,
+  IconTicket,
+  IconChartHistogram,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -31,12 +33,16 @@ import {
   Avatar,
   AvatarFallback,
 } from "@/components/ui/avatar"
+import { useRealtime } from "@/components/RealtimeProvider"
+import { NotificationSheet } from "@/components/NotificationSheet"
 
 const navItems = [
   { to: "/manage", icon: IconDashboard, label: "Dashboard", end: true },
   { to: "/manage/licenses", icon: IconKey, label: "Licenses" },
   { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
   { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
+  { to: "/manage/tickets", icon: IconTicket, label: "Tickets" },
+  { to: "/manage/tickets/analytics", icon: IconChartHistogram, label: "Analytics" },
   { to: "/manage/mcp", icon: IconServer, label: "MCP" },
 ]
 
@@ -55,6 +61,7 @@ export function Layout() {
   const [collapsed, setCollapsed] = useState<boolean>(getInitialCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [user, setUser] = useState<{ name: string; email: string } | null>(null)
+  const { unreadCount } = useRealtime()
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(collapsed))
@@ -97,19 +104,6 @@ export function Layout() {
   return (
     <TooltipProvider>
       <div className="flex h-screen overflow-hidden bg-background">
-        {/* Mobile top bar */}
-        <div className="fixed top-0 left-0 right-0 z-40 flex h-14 items-center border-b border-border bg-background px-4 md:hidden">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="cursor-pointer"
-            onClick={() => setMobileOpen(true)}
-          >
-            <IconMenu className="h-5 w-5" />
-          </Button>
-          <span className="ml-2 text-lg font-semibold">Chatloka</span>
-        </div>
-
         {/* Mobile overlay */}
         {mobileOpen && (
           <div
@@ -164,7 +158,7 @@ export function Layout() {
                           onClick={() => setMobileOpen(false)}
                           className={({ isActive }) =>
                             cn(
-                              "flex items-center justify-center rounded-md p-2 text-sm font-medium transition-colors cursor-pointer",
+                              "relative flex items-center justify-center rounded-md p-2 text-sm font-medium transition-colors cursor-pointer",
                               isActive
                                 ? "bg-sidebar-primary/15 text-sidebar-primary"
                                 : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
@@ -174,6 +168,11 @@ export function Layout() {
                       }
                     >
                       <item.icon className="h-5 w-5" />
+                      {item.to === "/manage/tickets" && unreadCount > 0 && (
+                        <span className="absolute right-0 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </span>
+                      )}
                     </TooltipTrigger>
                     <TooltipContent side="right">
                       {item.label}
@@ -199,6 +198,11 @@ export function Layout() {
                 >
                   <item.icon className="h-5 w-5 shrink-0" />
                   <span>{item.label}</span>
+                  {item.to === "/manage/tickets" && unreadCount > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold text-primary-foreground">
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
                 </NavLink>
               )
             })}
@@ -289,11 +293,27 @@ export function Layout() {
         {/* Main content */}
         <main
           className={cn(
-            "flex-1 overflow-auto transition-all duration-300 pt-14 md:pt-0 bg-background",
+            "flex min-w-0 flex-1 flex-col overflow-auto bg-background transition-all duration-300",
             collapsed ? "md:ml-[3rem]" : "md:ml-64"
           )}
         >
-          <div className="p-4 md:p-6">
+          {/* Sticky top header (mobile + desktop) */}
+          <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-4 backdrop-blur md:px-6">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="cursor-pointer md:hidden"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open menu"
+            >
+              <IconMenu className="h-5 w-5" />
+            </Button>
+            <span className="text-lg font-semibold md:hidden">Chatloka</span>
+            <div className="flex-1" />
+            <NotificationSheet />
+          </header>
+
+          <div className="flex-1 p-4 md:p-6">
             <Outlet />
           </div>
         </main>

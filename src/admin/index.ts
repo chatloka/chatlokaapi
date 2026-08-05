@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { createAuth } from "../auth";
 import { AppUpdateService } from "../services/appUpdate";
+import { TicketService } from "../services/ticket";
+import { NotificationService } from "../services/notification";
+import { ResendService } from "../services/resend";
+import { broadcastRealtime } from "../realtime/hub";
 import type { CloudflareBindings } from "../types";
 
 export interface AdminVariables {
@@ -551,4 +555,425 @@ adminRoutes.get("/app-update-logs", async (c) => {
       totalPages: Math.ceil(total / limit),
     },
   });
+});
+
+// ============================================
+// Ticket Support System
+// ============================================
+
+// List tickets
+adminRoutes.get("/tickets", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
+  const status = c.req.query("status") || "all";
+  const search = c.req.query("search") || "";
+  const sort = c.req.query("sort") || "newest";
+
+  const ticketService = new TicketService(db);
+  const { tickets, total } = await ticketService.getTicketsPaginated(page, limit, {
+    status: status !== "all" ? status : undefined,
+    search: search || undefined,
+    sort,
+  });
+
+  return c.json({
+    tickets,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+// Get ticket stats
+adminRoutes.get("/tickets/stats", async (c) => {
+  const db = c.env.DB;
+  const ticketService = new TicketService(db);
+  const stats = await ticketService.getTicketStats();
+  return c.json({ stats });
+});
+
+// Get ticket analytics (WIB timezone)
+adminRoutes.get("/tickets/analytics", async (c) => {
+  const db = c.env.DB;
+  const ticketService = new TicketService(db);
+  const analytics = await ticketService.getAnalytics();
+  return c.json({ analytics });
+});
+
+// Get unread ticket count + list
+adminRoutes.get("/tickets/unread", async (c) => {
+  const db = c.env.DB;
+  const ticketService = new TicketService(db);
+  const count = await ticketService.getUnreadCount();
+  const tickets = await ticketService.getUnreadTickets();
+  return c.json({ count, tickets: tickets.slice(0, 10) });
+});
+
+// Mark ticket as seen by admin
+adminRoutes.post("/tickets/:ticketNumber/read", async (c) => {
+  const db = c.env.DB;
+  const ticketNumber = c.req.param("ticketNumber");
+
+  const ticketService = new TicketService(db);
+  const ticket = await ticketService.getTicketByNumber(ticketNumber);
+
+  if (!ticket) {
+    return c.json({ error: "Ticket not found" }, 404);
+  }
+
+  await ticketService.markTicketSeen(ticket.id);
+  const count = await new NotificationService(db).getUnreadCount();
+
+  return c.json({ success: true, unreadCount: count });
+});
+
+// Get ticket detail
+adminRoutes.get("/tickets/:ticketNumber", async (c) => {
+  const db = c.env.DB;
+  const ticketNumber = c.req.param("ticketNumber");
+
+  const ticketService = new TicketService(db);
+  const ticket = await ticketService.getTicketByNumber(ticketNumber);
+
+  if (!ticket) {
+    return c.json({ error: "Ticket not found" }, 404);
+  }
+
+  const messages = await ticketService.getTicketMessages(ticket.id);
+
+  // Get attachments for each message
+  const messagesWithAttachments = await Promise.all(
+    messages.map(async (msg) => {
+      const attachments = await ticketService.getMessageAttachments(msg.id);
+      return { ...msg, attachments };
+    })
+  );
+
+  return c.json({
+    ticket,
+    messages: messagesWithAttachments,
+  });
+});
+
+// Reply to ticket (multipart: body_html, body_text, files[])
+adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
+  const db = c.env.DB;
+  const env = c.env;
+  const bucket = c.env.PLUGINS_BUCKET;
+  const ticketNumber = c.req.param("ticketNumber");
+
+  const ticketService = new TicketService(db);
+  const ticket = await ticketService.getTicketByNumber(ticketNumber);
+
+  if (!ticket) {
+    return c.json({ error: "Ticket not found" }, 404);
+  }
+
+  // Parse multipart form. Note: adminRoutes already passed through session middleware.
+  let bodyHtml = "";
+  let bodyText: string | undefined;
+  let files: File[] = [];
+
+  const contentType = c.req.header("Content-Type") || "";
+  if (contentType.includes("multipart/form-data")) {
+    const form = await c.req.formData();
+    bodyHtml = (form.get("body_html") as string) || "";
+    bodyText = (form.get("body_text") as string) || undefined;
+    const fileEntries = form.getAll("files");
+    files = fileEntries.filter((f): f is File => typeof f === "object" && f !== null && "arrayBuffer" in f);
+  } else {
+    const body = await c.req.json<{
+      body_html: string;
+      body_text?: string;
+      attachments?: Array<{ filename: string; content: string; content_type?: string }>;
+    }>();
+    bodyHtml = body.body_html || "";
+    bodyText = body.body_text;
+    // Legacy JSON attachment support: base64 → File
+    if (body.attachments?.length) {
+      for (const a of body.attachments) {
+        try {
+          const bin = atob(a.content);
+          const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+          files.push(new File([bytes], a.filename, { type: a.content_type || "application/octet-stream" }));
+        } catch {
+          // skip malformed legacy attachment
+        }
+      }
+    }
+  }
+
+  if (!bodyHtml.trim()) {
+    return c.json({ error: "body_html is required" }, 400);
+  }
+
+  // Enforce a reasonable size per file (Resend limit is 10MB per attachment)
+  const MAX_FILE_BYTES = 10 * 1024 * 1024;
+  for (const f of files) {
+    if (f.size > MAX_FILE_BYTES) {
+      return c.json({ error: `File "${f.name}" exceeds 10MB limit` }, 400);
+    }
+  }
+
+  // Read file contents → base64 for Resend + ArrayBuffer for R2
+  const uploadedAttachments: Array<{
+    filename: string;
+    content_type: string;
+    file_size: number;
+    r2_path: string;
+    resendContent: string;
+  }> = [];
+
+  for (const f of files) {
+    const buf = await f.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as number[]);
+    }
+    const resendContent = btoa(binary);
+    uploadedAttachments.push({
+      filename: f.name,
+      content_type: f.type || "application/octet-stream",
+      file_size: f.size,
+      r2_path: "",
+      resendContent,
+    });
+  }
+
+  // Get all references for threading
+  const allReferences = await ticketService.getAllReferences(ticket.id);
+  const messages = await ticketService.getTicketMessages(ticket.id);
+  const lastMessage = messages[messages.length - 1];
+
+  // Build headers for threading
+  const headers: Record<string, string> = {};
+  if (lastMessage?.message_id) {
+    headers["In-Reply-To"] = lastMessage.message_id;
+    if (allReferences.length > 0) {
+      headers["References"] = [...allReferences, lastMessage.message_id].join(" ");
+    }
+  }
+
+  // Send email via Resend (with attachments as base64)
+  const resendService = new ResendService(env);
+  const result = await resendService.sendEmail({
+    from: "support@chatloka.net",
+    to: [ticket.from_email],
+    subject: `Re: ${ticket.subject}`,
+    html: bodyHtml,
+    text: bodyText,
+    headers,
+    attachments: uploadedAttachments.map((a) => ({
+      filename: a.filename,
+      content: a.resendContent,
+      content_type: a.content_type,
+    })),
+  });
+
+  // Store outbound message
+  const message = await ticketService.createMessage({
+    ticket_id: ticket.id,
+    direction: "outbound",
+    from_email: "support@chatloka.net",
+    to_email: ticket.from_email,
+    subject: `Re: ${ticket.subject}`,
+    body_html: bodyHtml,
+    body_text: bodyText,
+    resend_email_id: result.id,
+    message_id: result.id,
+    has_attachments: uploadedAttachments.length > 0 ? 1 : 0,
+  });
+
+  // Upload attachments to R2 (after we know the message id) and create records
+  const storedAttachments = [];
+  for (const a of uploadedAttachments) {
+    const r2Path = `ticket-attachments/${ticket.ticket_number}/${message.id}/${a.filename}`;
+    // Decode base64 back to raw bytes
+    const binaryStr = atob(a.resendContent);
+    const bytes = Uint8Array.from(binaryStr, (ch) => ch.charCodeAt(0));
+    await bucket.put(r2Path, bytes, { httpMetadata: { contentType: a.content_type } });
+    const attachmentId = await ticketService.createAttachment({
+      ticket_message_id: message.id,
+      ticket_id: ticket.id,
+      filename: a.filename,
+      content_type: a.content_type,
+      file_size: a.file_size,
+      r2_path: r2Path,
+    });
+    storedAttachments.push({
+      id: attachmentId,
+      filename: a.filename,
+      content_type: a.content_type,
+      file_size: a.file_size,
+      r2_path: r2Path,
+    });
+  }
+
+  // Create email thread
+  await ticketService.createEmailThread({
+    ticket_id: ticket.id,
+    message_id: result.id,
+    parent_message_id: lastMessage?.message_id,
+  });
+
+  // Notify other admin clients of the reply
+  const notificationService = new NotificationService(db);
+  await notificationService.create({
+    type: "ticket_replied",
+    ticket_id: ticket.id,
+    ticket_number: ticket.ticket_number,
+    subject: ticket.subject,
+    from_email: "support@chatloka.net",
+    direction: "outbound",
+    summary: bodyText?.slice(0, 200),
+  });
+
+  const unreadCount = await notificationService.getUnreadCount();
+  await broadcastRealtime(env, {
+    type: "ticket_replied",
+    ticketId: ticket.id,
+    ticketNumber: ticket.ticket_number,
+    subject: ticket.subject,
+    fromEmail: ticket.from_email,
+    timestamp: new Date().toISOString(),
+    unreadCount,
+  });
+
+  return c.json({ success: true, message_id: result.id, attachments: storedAttachments });
+});
+
+// Update ticket
+adminRoutes.patch("/tickets/:ticketNumber", async (c) => {
+  const db = c.env.DB;
+  const ticketNumber = c.req.param("ticketNumber");
+
+  const body = await c.req.json<{
+    status?: string;
+    priority?: string;
+    assigned_to?: string;
+  }>();
+
+  const ticketService = new TicketService(db);
+  const ticket = await ticketService.getTicketByNumber(ticketNumber);
+
+  if (!ticket) {
+    return c.json({ error: "Ticket not found" }, 404);
+  }
+
+  await ticketService.updateTicket(ticketNumber, body);
+
+  // Notify other admin clients of the status change
+  const notificationService = new NotificationService(db);
+  await notificationService.create({
+    type: "ticket_status_changed",
+    ticket_id: ticket.id,
+    ticket_number: ticket.ticket_number,
+    subject: ticket.subject,
+    from_email: null,
+    direction: null,
+  });
+
+  const unreadCount = await notificationService.getUnreadCount();
+  await broadcastRealtime(c.env, {
+    type: "ticket_status_changed",
+    ticketId: ticket.id,
+    ticketNumber: ticket.ticket_number,
+    subject: ticket.subject,
+    fromEmail: ticket.from_email,
+    timestamp: new Date().toISOString(),
+    unreadCount,
+  });
+
+  return c.json({ success: true });
+});
+
+// Download attachment
+adminRoutes.get("/tickets/attachments/:attachmentId", async (c) => {
+  const db = c.env.DB;
+  const bucket = c.env.PLUGINS_BUCKET;
+  const attachmentId = parseInt(c.req.param("attachmentId"), 10);
+
+  const ticketService = new TicketService(db);
+  const attachment = await ticketService.getAttachmentById(attachmentId);
+
+  if (!attachment) {
+    return c.json({ error: "Attachment not found" }, 404);
+  }
+
+  const object = await bucket.get(attachment.r2_path);
+  if (!object || !object.body) {
+    return c.json({ error: "File not found in storage" }, 404);
+  }
+
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      "Content-Type": attachment.content_type,
+      "Content-Disposition": `attachment; filename="${attachment.filename}"`,
+    },
+  });
+});
+
+// ============================================
+// Notifications
+// ============================================
+
+// Paginated notification feed (infinite scroll)
+adminRoutes.get("/notifications", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
+
+  const notificationService = new NotificationService(db);
+  const { notifications, total } = await notificationService.getPaginated(page, limit);
+  const unreadCount = await notificationService.getUnreadCount();
+
+  return c.json({
+    notifications,
+    unreadCount,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+// Mark a single notification as read
+adminRoutes.post("/notifications/:id/read", async (c) => {
+  const db = c.env.DB;
+  const id = parseInt(c.req.param("id"), 10);
+
+  const notificationService = new NotificationService(db);
+  await notificationService.markRead(id);
+  const unreadCount = await notificationService.getUnreadCount();
+
+  return c.json({ success: true, unreadCount });
+});
+
+// Mark all notifications as read
+adminRoutes.post("/notifications/read-all", async (c) => {
+  const db = c.env.DB;
+  const notificationService = new NotificationService(db);
+  const marked = await notificationService.markAllRead();
+
+  // Tell other admin clients their badge is cleared
+  await broadcastRealtime(c.env, {
+    type: "notifications_read",
+    ticketId: 0,
+    ticketNumber: "",
+    subject: "",
+    fromEmail: "",
+    timestamp: new Date().toISOString(),
+    unreadCount: 0,
+  });
+
+  return c.json({ success: true, marked });
 });

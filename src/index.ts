@@ -5,6 +5,9 @@ import { EnvatoService } from './services/envato'
 import { SignatureService } from './services/signature'
 import { PluginService } from './services/plugin'
 import { AppUpdateService } from './services/appUpdate'
+import { ResendService } from './services/resend'
+import { TicketService } from './services/ticket'
+import { NotificationService } from './services/notification'
 import { requireValidLicense, type LicenseContextVariables } from './middleware/requireValidLicense'
 import { getClientIp } from './http'
 import { signHs256, verifyHs256 } from './services/jwt'
@@ -23,6 +26,10 @@ import type {
   VerifyRequest,
 } from './types'
 import type { Context } from 'hono'
+
+// Durable Object classes must be exported from the worker entrypoint.
+export { RealtimeHub } from './realtime/hub'
+import { broadcastRealtime } from './realtime/hub'
 
 const app = new Hono<{ Bindings: CloudflareBindings; Variables: LicenseContextVariables }>()
 
@@ -817,6 +824,207 @@ app.post('/api/app/update-result', requireValidLicense, async (c) => {
   } catch {
     return c.json({ error: 'server_error', message: 'Internal server error' }, 500)
   }
+})
+
+// ============================================
+// Resend Webhook Handler (Ticket System)
+// ============================================
+
+app.post('/api/webhooks/resend', async (c) => {
+  try {
+    const payload = await c.req.text()
+    const svixId = c.req.header('svix-id') || ''
+    const svixTimestamp = c.req.header('svix-timestamp') || ''
+    const svixSignature = c.req.header('svix-signature') || ''
+
+    if (!svixId || !svixTimestamp || !svixSignature) {
+      return c.json({ error: 'Missing webhook headers' }, 400)
+    }
+
+    const resendService = new ResendService(c.env)
+
+    // Verify webhook signature
+    const isValid = await resendService.verifyWebhook(payload, {
+      'svix-id': svixId,
+      'svix-timestamp': svixTimestamp,
+      'svix-signature': svixSignature,
+    })
+
+    if (!isValid) {
+      console.error('[Resend Webhook] Invalid signature')
+      return c.json({ error: 'Invalid signature' }, 401)
+    }
+
+    const event = JSON.parse(payload)
+
+    // Only handle email.received events
+    if (event.type !== 'email.received') {
+      return c.json({ received: true })
+    }
+
+    const db = c.env.DB
+    const ticketService = new TicketService(db)
+
+    // Check if this is a reply (has In-Reply-To)
+    // We need to fetch the full email to get headers
+    const email = await resendService.getReceivedEmail(event.data.email_id)
+
+    // Check for In-Reply-To header to find existing thread
+    const inReplyTo = email.headers?.['in-reply-to'] || email.headers?.['In-Reply-To'] || null
+    const references = email.headers?.references || email.headers?.['References'] || null
+
+    let ticket = null
+    let isNewTicket = false
+    if (inReplyTo) {
+      // Find ticket by message_id in thread table
+      ticket = await ticketService.findTicketByMessageId(inReplyTo)
+    }
+
+    // Create new ticket if not found
+    if (!ticket) {
+      const ticketNumber = await ticketService.generateTicketNumber()
+      ticket = await ticketService.createTicket({
+        ticket_number: ticketNumber,
+        from_email: event.data.from,
+        subject: event.data.subject,
+      })
+      isNewTicket = true
+    }
+
+    // Download attachments and upload to R2
+    const bucket = c.env.PLUGINS_BUCKET
+    const attachmentRecords: Array<{
+      filename: string
+      content_type: string
+      file_size: number
+      r2_path: string
+      resend_attachment_id: string
+      content_id: string | null
+      content_disposition: string | null
+    }> = []
+
+    if (event.data.attachments && event.data.attachments.length > 0) {
+      for (const att of event.data.attachments) {
+        try {
+          // Download attachment from Resend
+          const downloadUrl = await resendService.getAttachmentDownloadUrl(event.data.email_id, att.id)
+          const attResponse = await fetch(downloadUrl)
+          if (attResponse.ok) {
+            const attBuffer = await attResponse.arrayBuffer()
+            const r2Path = `ticket-attachments/${ticket.ticket_number}/${event.data.email_id}/${att.filename}`
+
+            // Upload to R2
+            await bucket.put(r2Path, attBuffer, {
+              httpMetadata: { contentType: att.content_type },
+            })
+
+            attachmentRecords.push({
+              filename: att.filename,
+              content_type: att.content_type,
+              file_size: attBuffer.byteLength,
+              r2_path: r2Path,
+              resend_attachment_id: att.id,
+              content_id: att.content_id || null,
+              content_disposition: att.content_disposition || null,
+            })
+          }
+        } catch (attError) {
+          console.error(`[Resend Webhook] Failed to process attachment: ${att.filename}`, attError)
+        }
+      }
+    }
+
+    // Create message record
+    const message = await ticketService.createMessage({
+      ticket_id: ticket.id,
+      direction: 'inbound',
+      from_email: event.data.from,
+      to_email: event.data.to[0],
+      subject: event.data.subject,
+      body_html: email.html,
+      body_text: email.text,
+      resend_email_id: event.data.email_id,
+      message_id: event.data.message_id,
+      in_reply_to: inReplyTo,
+      references_header: references,
+      has_attachments: attachmentRecords.length > 0 ? 1 : 0,
+    })
+
+    // Create attachment records
+    for (const att of attachmentRecords) {
+      await ticketService.createAttachment({
+        ticket_message_id: message.id,
+        ticket_id: ticket.id,
+        filename: att.filename,
+        content_type: att.content_type,
+        file_size: att.file_size,
+        r2_path: att.r2_path,
+        resend_attachment_id: att.resend_attachment_id,
+        content_id: att.content_id,
+        content_disposition: att.content_disposition,
+      })
+    }
+
+    // Create email thread record
+    await ticketService.createEmailThread({
+      ticket_id: ticket.id,
+      message_id: event.data.message_id,
+      parent_message_id: inReplyTo,
+    })
+
+    // Broadcast realtime notification to admin clients
+    const notificationService = new NotificationService(db)
+    await notificationService.create({
+      type: isNewTicket ? 'ticket_new' : 'message_inbound',
+      ticket_id: ticket.id,
+      ticket_number: ticket.ticket_number,
+      subject: ticket.subject,
+      from_email: event.data.from,
+      direction: 'inbound',
+    })
+
+    const unreadCount = await notificationService.getUnreadCount()
+    await broadcastRealtime(c.env, {
+      type: isNewTicket ? 'ticket_new' : 'message_inbound',
+      ticketId: ticket.id,
+      ticketNumber: ticket.ticket_number,
+      subject: ticket.subject,
+      fromEmail: event.data.from,
+      timestamp: new Date().toISOString(),
+      unreadCount,
+    })
+
+    return c.json({ received: true })
+  } catch (err) {
+    console.error('[Resend Webhook] Error:', err)
+    // Always return 200 to prevent Resend retries
+    return c.json({ received: true })
+  }
+})
+
+// ============================================
+// Realtime WebSocket endpoint (Notifications)
+// ============================================
+
+// WebSocket upgrade endpoint (session-guarded)
+app.get('/api/realtime/ws', async (c) => {
+  const upgrade = c.req.header('Upgrade')
+  if (upgrade?.toLowerCase() !== 'websocket') {
+    return c.json({ error: 'Expected WebSocket upgrade' }, 426)
+  }
+
+  // Verify admin session before allowing the connection
+  try {
+    const auth = createAuth(c.env)
+    const session = await auth.api.getSession({ headers: c.req.raw.headers })
+    if (!session?.user) return c.json({ error: 'Unauthorized' }, 401)
+  } catch {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const id = c.env.REALTIME_DO.idFromName('admin-hub')
+  const stub = c.env.REALTIME_DO.get(id)
+  return stub.fetch(c.req.raw)
 })
 
 // Better Auth handler
