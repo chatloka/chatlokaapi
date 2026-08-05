@@ -1,4 +1,11 @@
-import { Routes, Route, Navigate } from "react-router-dom"
+import {
+  createBrowserRouter,
+  createRoutesFromElements,
+  Route,
+  Outlet,
+  Navigate,
+} from "react-router-dom"
+import { RealtimeProvider } from "./components/RealtimeProvider"
 import { Layout } from "./components/Layout"
 import { ProtectedRoute } from "./components/ProtectedRoute"
 import { Login } from "./pages/Login"
@@ -13,9 +20,17 @@ import { Tickets } from "./pages/Tickets"
 import { TicketDetail } from "./pages/TicketDetail"
 import { TicketAnalyticsPage } from "./pages/TicketAnalytics"
 
-function App() {
+function RootLayout() {
   return (
-    <Routes>
+    <RealtimeProvider>
+      <Outlet />
+    </RealtimeProvider>
+  )
+}
+
+const router = createBrowserRouter(
+  createRoutesFromElements(
+    <Route element={<RootLayout />}>
       <Route path="/login" element={<Login />} />
       <Route
         path="/manage"
@@ -38,8 +53,8 @@ function App() {
       </Route>
       <Route path="/" element={<Navigate to="/manage" replace />} />
       <Route path="*" element={<Navigate to="/manage" replace />} />
-    </Routes>
+    </Route>
   )
-}
+)
 
-export default App
+export default router
