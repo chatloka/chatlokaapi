@@ -24,8 +24,6 @@ import {
   IconClock,
   IconChartBar,
   IconServer,
-  IconUser,
-  IconWorld,
   IconFileBroken,
   IconEye,
 } from "@tabler/icons-react"
@@ -91,7 +89,7 @@ export function Dashboard() {
     try {
       const res = await fetch("/manage/api/stats", { credentials: "include" })
       if (res.ok) {
-        const data = await res.json()
+        const data = await res.json() as Stats
         setStats(data)
       }
     } catch (error) {
@@ -108,12 +106,6 @@ export function Dashboard() {
       </div>
     )
   }
-
-  const apiPieData = stats ? [
-    { name: "Success", value: stats.apiStats.success },
-    { name: "Client Error", value: stats.apiStats.clientError },
-    { name: "Server Error", value: stats.apiStats.serverError },
-  ].filter(d => d.value > 0) : []
 
   const licensePieData = stats ? [
     { name: "Active", value: stats.activeLicenses },

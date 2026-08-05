@@ -38,8 +38,6 @@ import {
   IconAlertCircle,
   IconServer,
   IconClock,
-  IconWorld,
-  IconFilter,
 } from "@tabler/icons-react"
 
 interface ApiLog {
@@ -429,7 +427,7 @@ export function Logs() {
                       className="pl-8 w-full sm:w-64 cursor-text"
                     />
                   </div>
-                  <Select value={sort} onValueChange={setSort}>
+                  <Select value={sort} onValueChange={(v) => v && setSort(v)}>
                     <SelectTrigger className="w-[160px] cursor-pointer">
                       <SelectValue />
                     </SelectTrigger>
@@ -535,7 +533,7 @@ export function Logs() {
                       className="pl-8 w-full sm:w-64 cursor-text"
                     />
                   </div>
-                  <Select value={tamperSort} onValueChange={setTamperSort}>
+                  <Select value={tamperSort} onValueChange={(v) => v && setTamperSort(v)}>
                     <SelectTrigger className="w-[160px] cursor-pointer">
                       <SelectValue />
                     </SelectTrigger>

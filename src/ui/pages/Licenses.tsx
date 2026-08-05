@@ -50,7 +50,6 @@ import {
   IconKey,
   IconWorld,
   IconMail,
-  IconUser,
   IconClock,
 } from "@tabler/icons-react"
 import { toast } from "sonner"
@@ -255,7 +254,7 @@ export function Licenses() {
                 className="max-w-sm pl-8"
               />
             </div>
-            <Select value={sort} onValueChange={setSort}>
+            <Select value={sort} onValueChange={(v) => v && setSort(v)}>
               <SelectTrigger className="w-[160px] cursor-pointer">
                 <SelectValue />
               </SelectTrigger>
@@ -382,7 +381,7 @@ export function Licenses() {
             </div>
             <div className="space-y-2">
               <Label>License Type</Label>
-              <Select value={createLicenseType} onValueChange={setCreateLicenseType}>
+              <Select value={createLicenseType} onValueChange={(v) => v && setCreateLicenseType(v)}>
                 <SelectTrigger className="w-full cursor-pointer">
                   <SelectValue />
                 </SelectTrigger>
