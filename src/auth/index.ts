@@ -75,6 +75,7 @@ export function createAuth(env: {
     database: env.DB,
     emailAndPassword: {
       enabled: true,
+      disableSignUp: true,
       password: {
         hash: async (password: string) => hashPassword(password),
         verify: async ({ hash, password }: { hash: string; password: string }) =>
