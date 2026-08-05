@@ -9,6 +9,7 @@ import { getClientIp } from './http'
 import { signHs256, verifyHs256 } from './services/jwt'
 import { createAuth } from './auth'
 import { adminRoutes } from './admin'
+import { getMigrations } from 'better-auth/db/migration'
 import type {
   ActivateRequest,
   CheckUpdatesRequest,
@@ -577,6 +578,8 @@ app.get('/downloads/:filename', async (c) => {
 app.all('/api/auth/*', async (c) => {
   try {
     const auth = createAuth(c.env)
+    const { runMigrations } = await getMigrations(auth.options)
+    await runMigrations()
     return await auth.handler(c.req.raw)
   } catch (err: any) {
     console.error('[Better Auth]', err?.message || err)
