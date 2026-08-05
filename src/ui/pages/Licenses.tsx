@@ -32,7 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Plus, Search } from "lucide-react"
+import { IconDotsVertical, IconPlus, IconSearch } from "@tabler/icons-react"
 import { toast } from "sonner"
 
 interface License {
@@ -215,11 +215,11 @@ export function Licenses() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Licenses</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Licenses</h1>
           <p className="text-muted-foreground">Manage license activations</p>
         </div>
         <Button onClick={() => setCreateDialogOpen(true)} className="cursor-pointer">
-          <Plus className="mr-2 h-4 w-4" />
+          <IconPlus className="mr-2 h-4 w-4" />
           Add License
         </Button>
       </div>
@@ -232,7 +232,7 @@ export function Licenses() {
           </CardDescription>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <IconSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search by purchase code, domain, or email..."
                 value={search}
@@ -292,7 +292,7 @@ export function Licenses() {
                         <DropdownMenu>
                           <DropdownMenuTrigger className="cursor-pointer">
                             <Button variant="ghost" size="icon" className="cursor-pointer">
-                              <MoreHorizontal className="h-4 w-4" />
+                              <IconDotsVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">

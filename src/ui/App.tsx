@@ -5,6 +5,7 @@ import { Login } from "./pages/Login"
 import { Dashboard } from "./pages/Dashboard"
 import { Licenses } from "./pages/Licenses"
 import { Plugins } from "./pages/Plugins"
+import { PluginDetail } from "./pages/PluginDetail"
 import { Logs } from "./pages/Logs"
 import { Profile } from "./pages/Profile"
 
@@ -23,6 +24,7 @@ function App() {
         <Route index element={<Dashboard />} />
         <Route path="licenses" element={<Licenses />} />
         <Route path="plugins" element={<Plugins />} />
+        <Route path="plugins/:slug" element={<PluginDetail />} />
         <Route path="logs" element={<Logs />} />
         <Route path="profile" element={<Profile />} />
       </Route>

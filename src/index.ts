@@ -23,6 +23,54 @@ import type { Context } from 'hono'
 
 const app = new Hono<{ Bindings: CloudflareBindings; Variables: LicenseContextVariables }>()
 
+// API Logging middleware for all public endpoints
+app.use('/api/*', async (c, next) => {
+  const startTime = Date.now()
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
+  const userAgent = c.req.header('user-agent') || ''
+  const method = c.req.method
+  const endpoint = new URL(c.req.url).pathname
+
+  // Try to extract purchase_code and domain from body
+  let purchaseCode: string | null = null
+  let domain: string | null = null
+  let requestBodySize: number | null = null
+
+  if (method === 'POST' || method === 'PUT') {
+    try {
+      const cloned = c.req.raw.clone()
+      const body = await cloned.json() as Record<string, unknown>
+      purchaseCode = (body.purchase_code as string) || null
+      domain = (body.domain as string) || null
+      requestBodySize = JSON.stringify(body).length
+    } catch {
+      // Body might not be JSON, that's fine
+    }
+  }
+
+  let statusCode = 500
+
+  try {
+    await next()
+    statusCode = c.res.status
+    return c.res
+  } catch (error) {
+    statusCode = 500
+    throw error
+  } finally {
+    const responseTimeMs = Date.now() - startTime
+
+    // Fire-and-forget logging (don't block response)
+    c.env.DB.prepare(
+      `INSERT INTO api_logs (method, endpoint, ip_address, user_agent, purchase_code, domain, status_code, response_time_ms, request_size_bytes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+    )
+      .bind(method, endpoint, ip, userAgent, purchaseCode, domain, statusCode, responseTimeMs, requestBodySize)
+      .run()
+      .catch(() => {}) // Silently ignore logging errors
+  }
+})
+
 async function enforceRateLimit(c: Context, limiter: RateLimit, scope: string) {
   const ip = c.req.header('cf-connecting-ip') || 'unknown-ip'
   const apiKey = c.req.header('x-license-key') || 'anon'

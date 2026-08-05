@@ -13,7 +13,7 @@ import {
   Avatar,
   AvatarFallback,
 } from "@/components/ui/avatar"
-import { User, Eye, EyeOff, Save, Loader2 } from "lucide-react"
+import { IconUser, IconEye, IconEyeOff, IconDeviceFloppy, IconLoader2 } from "@tabler/icons-react"
 import { toast } from "sonner"
 
 interface UserProfile {
@@ -111,7 +111,7 @@ export function Profile() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     )
   }
@@ -121,7 +121,7 @@ export function Profile() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Profile</h1>
         <p className="text-muted-foreground">
           Manage your account settings
         </p>
@@ -130,7 +130,7 @@ export function Profile() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <User className="h-5 w-5" />
+            <IconUser className="h-5 w-5" />
             User Info
           </CardTitle>
           <CardDescription>Your account details</CardDescription>
@@ -182,9 +182,9 @@ export function Profile() {
                   tabIndex={-1}
                 >
                   {showCurrentPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    <IconEyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
+                    <IconEye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </Button>
               </div>
@@ -212,9 +212,9 @@ export function Profile() {
                   tabIndex={-1}
                 >
                   {showNewPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    <IconEyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
+                    <IconEye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </Button>
               </div>
@@ -242,9 +242,9 @@ export function Profile() {
                   tabIndex={-1}
                 >
                   {showConfirmPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    <IconEyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
+                    <IconEye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </Button>
               </div>
@@ -253,12 +253,12 @@ export function Profile() {
             <Button type="submit" className="w-full cursor-pointer" disabled={submitting}>
               {submitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <IconLoader2 className="mr-2 h-4 w-4 animate-spin" />
                   Saving...
                 </>
               ) : (
                 <>
-                  <Save className="mr-2 h-4 w-4" />
+                  <IconDeviceFloppy className="mr-2 h-4 w-4" />
                   Save Changes
                 </>
               )}

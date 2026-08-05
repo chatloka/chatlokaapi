@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   Card,
   CardContent,
@@ -26,13 +27,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Upload, Package, Check, AlertCircle } from "lucide-react"
+import {
+  IconUpload,
+  IconPackage,
+  IconCircleCheck,
+  IconAlertCircle,
+  IconDownload,
+} from "@tabler/icons-react"
 
 interface Plugin {
   id: number
   slug: string
   version: string
   changelog: string | null
+  zip_path: string
   checksum: string
   released_at: string
   is_latest: boolean
@@ -47,6 +55,7 @@ interface UploadResponse {
 }
 
 export function Plugins() {
+  const navigate = useNavigate()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(true)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
@@ -124,12 +133,27 @@ export function Plugins() {
         success: false,
         message: "An error occurred during upload",
       })
-      setUploadResult({
-        success: false,
-        message: "An error occurred during upload",
-      })
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function handleDownload(slug: string) {
+    try {
+      const res = await fetch(`/manage/api/plugins/${slug}/download`, {
+        credentials: "include",
+      })
+      if (res.ok) {
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = `${slug}.zip`
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+    } catch (error) {
+      console.error("Failed to download plugin:", error)
     }
   }
 
@@ -155,13 +179,13 @@ export function Plugins() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Plugins</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Plugins</h1>
           <p className="text-muted-foreground">Manage plugin versions</p>
         </div>
         <Button onClick={() => setUploadDialogOpen(true)} className="cursor-pointer">
-          <Upload className="mr-2 h-4 w-4" />
+          <IconUpload className="mr-2 h-4 w-4" />
           Upload Plugin
         </Button>
       </div>
@@ -181,7 +205,7 @@ export function Plugins() {
             </div>
           ) : Object.keys(pluginsBySlug).length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Package className="h-12 w-12 mb-4" />
+              <IconPackage className="h-12 w-12 mb-4" />
               <p>No plugins uploaded yet</p>
             </div>
           ) : (
@@ -189,12 +213,27 @@ export function Plugins() {
               {Object.entries(pluginsBySlug).map(([slug, versions]) => (
                 <div key={slug}>
                   <div className="mb-2 flex items-center gap-2">
-                    <h3 className="font-semibold">{slug}</h3>
+                    <button
+                      onClick={() => navigate(`/manage/plugins/${slug}`)}
+                      className="flex items-center gap-2 hover:underline cursor-pointer"
+                    >
+                      <IconPackage className="h-5 w-5 text-muted-foreground" />
+                      <h3 className="font-semibold text-foreground">{slug}</h3>
+                    </button>
                     {versions.some((v) => v.is_latest) && (
-                      <Badge className="bg-green-500">
+                      <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
                         v{versions.find((v) => v.is_latest)?.version}
                       </Badge>
                     )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDownload(slug)}
+                      className="cursor-pointer ml-auto"
+                    >
+                      <IconDownload className="mr-2 h-4 w-4" />
+                      Download
+                    </Button>
                   </div>
                   <Table>
                     <TableHeader>
@@ -219,7 +258,7 @@ export function Plugins() {
                           </TableCell>
                           <TableCell>
                             {plugin.is_latest ? (
-                              <Badge className="bg-green-500">Latest</Badge>
+                              <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">Latest</Badge>
                             ) : (
                               <Badge variant="secondary">Previous</Badge>
                             )}
@@ -248,14 +287,14 @@ export function Plugins() {
               <div
                 className={`flex items-center gap-2 rounded-md p-3 text-sm ${
                   uploadResult.success
-                    ? "bg-green-500/10 text-green-600"
+                    ? "bg-emerald-500/10 text-emerald-500"
                     : "bg-destructive/10 text-destructive"
                 }`}
               >
                 {uploadResult.success ? (
-                  <Check className="h-4 w-4" />
+                  <IconCircleCheck className="h-4 w-4" />
                 ) : (
-                  <AlertCircle className="h-4 w-4" />
+                  <IconAlertCircle className="h-4 w-4" />
                 )}
                 {uploadResult.message}
               </div>
@@ -267,6 +306,7 @@ export function Plugins() {
                 placeholder="chatloka-license"
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
+                className="cursor-text"
               />
             </div>
             <div className="space-y-2">
@@ -276,13 +316,14 @@ export function Plugins() {
                 placeholder="1.0.0"
                 value={version}
                 onChange={(e) => setVersion(e.target.value)}
+                className="cursor-text"
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="changelog">Changelog</Label>
               <textarea
                 id="changelog"
-                className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-text"
                 placeholder="What's new in this version..."
                 value={changelog}
                 onChange={(e) => setChangelog(e.target.value)}
@@ -295,13 +336,13 @@ export function Plugins() {
                 onDragOver={handleDragOver}
                 className={`flex flex-col items-center justify-center rounded-md border-2 border-dashed p-6 transition-colors cursor-pointer ${
                   file
-                    ? "border-green-500 bg-green-500/10"
+                    ? "border-emerald-500 bg-emerald-500/10"
                     : "border-muted-foreground/25 hover:border-muted-foreground/50"
                 }`}
               >
                 {file ? (
                   <div className="text-center">
-                    <Check className="mx-auto h-8 w-8 text-green-500" />
+                    <IconCircleCheck className="mx-auto h-8 w-8 text-emerald-500" />
                     <p className="mt-2 text-sm font-medium">{file.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {(file.size / 1024).toFixed(1)} KB
@@ -309,7 +350,7 @@ export function Plugins() {
                   </div>
                 ) : (
                   <div className="text-center">
-                    <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+                    <IconUpload className="mx-auto h-8 w-8 text-muted-foreground" />
                     <p className="mt-2 text-sm text-muted-foreground">
                       Drop a .zip file here or{" "}
                       <button

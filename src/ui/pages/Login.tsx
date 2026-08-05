@@ -11,7 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Eye, EyeOff } from "lucide-react"
+import { IconEye, IconEyeOff } from "@tabler/icons-react"
 
 const TURNSTILE_SITE_KEY = "0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM"
 
@@ -116,9 +116,9 @@ export function Login() {
                   tabIndex={-1}
                 >
                   {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                    <IconEyeOff className="h-4 w-4 text-muted-foreground" />
                   ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
+                    <IconEye className="h-4 w-4 text-muted-foreground" />
                   )}
                 </Button>
               </div>

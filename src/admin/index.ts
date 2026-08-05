@@ -166,6 +166,15 @@ adminRoutes.get("/plugins", async (c) => {
   return c.json({ plugins: result.results });
 });
 
+adminRoutes.get("/plugins/:slug", async (c) => {
+  const db = c.env.DB;
+  const slug = c.req.param("slug");
+  const result = await db.prepare(
+    "SELECT * FROM plugin_versions WHERE slug = ? ORDER BY released_at DESC"
+  ).bind(slug).all();
+  return c.json({ slug, versions: result.results });
+});
+
 // Upload plugin
 adminRoutes.post("/plugins/upload", async (c) => {
   const db = c.env.DB;
@@ -210,19 +219,163 @@ adminRoutes.post("/plugins/upload", async (c) => {
   return c.json({ success: true, zipPath, checksum });
 });
 
-// Logs endpoints
+// Logs endpoints with pagination, search, and filtering
 adminRoutes.get("/logs", async (c) => {
   const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const offset = (page - 1) * limit;
+  const search = c.req.query("search") || "";
+  const endpoint = c.req.query("endpoint") || "";
+  const status = c.req.query("status") || "";
+  const sort = c.req.query("sort") || "newest";
+
+  let query = "SELECT * FROM api_logs WHERE 1=1";
+  let countQuery = "SELECT COUNT(*) as total FROM api_logs WHERE 1=1";
+  const params: unknown[] = [];
+  const countParams: unknown[] = [];
+
+  if (search) {
+    const searchClause = " AND (endpoint LIKE ? OR ip_address LIKE ? OR purchase_code LIKE ? OR user_agent LIKE ?)";
+    query += searchClause;
+    countQuery += searchClause;
+    const searchParam = `%${search}%`;
+    params.push(searchParam, searchParam, searchParam, searchParam);
+    countParams.push(searchParam, searchParam, searchParam, searchParam);
+  }
+
+  if (endpoint) {
+    const endpointClause = " AND endpoint = ?";
+    query += endpointClause;
+    countQuery += endpointClause;
+    params.push(endpoint);
+    countParams.push(endpoint);
+  }
+
+  if (status) {
+    const statusClause = " AND status_code = ?";
+    query += statusClause;
+    countQuery += statusClause;
+    params.push(parseInt(status, 10));
+    countParams.push(parseInt(status, 10));
+  }
+
+  const orderClause = sort === "oldest" ? "ASC" : "DESC";
+  query += ` ORDER BY created_at ${orderClause} LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  const [logsResult, countResult] = await db.batch([
+    db.prepare(query).bind(...params),
+    db.prepare(countQuery).bind(...countParams),
+  ]);
+
+  const total = (countResult.results?.[0] as { total: number })?.total || 0;
+
+  return c.json({
+    logs: logsResult.results,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+adminRoutes.get("/logs/endpoints", async (c) => {
+  const db = c.env.DB;
   const result = await db.prepare(
-    "SELECT * FROM api_logs ORDER BY created_at DESC LIMIT 100"
+    "SELECT DISTINCT endpoint, COUNT(*) as count FROM api_logs GROUP BY endpoint ORDER BY count DESC"
   ).all();
-  return c.json({ logs: result.results });
+  return c.json({ endpoints: result.results });
+});
+
+adminRoutes.get("/logs/stats", async (c) => {
+  const db = c.env.DB;
+  const result = await db.prepare(`
+    SELECT 
+      COUNT(*) as total_requests,
+      SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) as success_count,
+      SUM(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 ELSE 0 END) as client_error_count,
+      SUM(CASE WHEN status_code >= 500 THEN 1 ELSE 0 END) as server_error_count,
+      AVG(response_time_ms) as avg_response_time,
+      MAX(response_time_ms) as max_response_time
+    FROM api_logs
+    WHERE created_at > datetime('now', '-24 hours')
+  `).first();
+  return c.json({ stats: result });
 });
 
 adminRoutes.get("/logs/tamper", async (c) => {
   const db = c.env.DB;
-  const result = await db.prepare(
-    "SELECT * FROM tamper_logs ORDER BY created_at DESC LIMIT 100"
-  ).all();
-  return c.json({ logs: result.results });
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const offset = (page - 1) * limit;
+
+  const [logsResult, countResult] = await db.batch([
+    db.prepare("SELECT * FROM tamper_logs ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(limit, offset),
+    db.prepare("SELECT COUNT(*) as total FROM tamper_logs"),
+  ]);
+
+  const total = (countResult.results?.[0] as { total: number })?.total || 0;
+
+  return c.json({
+    logs: logsResult.results,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+// Plugin download endpoint (admin - generates a signed download URL)
+adminRoutes.get("/plugins/:slug/download", async (c) => {
+  const db = c.env.DB;
+  const bucket = c.env.PLUGINS_BUCKET;
+  const slug = c.req.param("slug");
+  const version = c.req.query("version");
+
+  let plugin;
+  if (version) {
+    plugin = await db.prepare(
+      "SELECT * FROM plugin_versions WHERE slug = ? AND version = ?"
+    ).bind(slug, version).first() as {
+      id: number;
+      slug: string;
+      version: string;
+      zip_path: string;
+      checksum: string;
+    } | undefined;
+  } else {
+    plugin = await db.prepare(
+      "SELECT * FROM plugin_versions WHERE slug = ? AND is_latest = 1"
+    ).bind(slug).first() as {
+      id: number;
+      slug: string;
+      version: string;
+      zip_path: string;
+      checksum: string;
+    } | undefined;
+  }
+
+  if (!plugin) {
+    return c.json({ error: "Plugin not found" }, 404);
+  }
+
+  const object = await bucket.get(plugin.zip_path);
+  if (!object || !object.body) {
+    return c.json({ error: "Plugin file not found in storage" }, 404);
+  }
+
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${slug}-${plugin.version}.zip"`,
+      "X-Checksum-SHA256": plugin.checksum,
+      ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
+    },
+  });
 });

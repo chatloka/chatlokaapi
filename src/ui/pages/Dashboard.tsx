@@ -5,7 +5,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Key, Package, AlertTriangle, Activity } from "lucide-react"
+import { IconKey, IconPackage, IconAlertTriangle, IconActivity } from "@tabler/icons-react"
 
 interface Stats {
   totalLicenses: number
@@ -51,34 +51,34 @@ export function Dashboard() {
       title: "Total Licenses",
       value: stats?.totalLicenses ?? 0,
       description: "All registered licenses",
-      icon: Key,
+      icon: IconKey,
     },
     {
       title: "Active Licenses",
       value: stats?.activeLicenses ?? 0,
       description: "Currently active licenses",
-      icon: Activity,
+      icon: IconActivity,
     },
     {
       title: "Total Plugins",
       value: stats?.totalPlugins ?? 0,
       description: "Available plugins",
-      icon: Package,
+      icon: IconPackage,
     },
     {
       title: "Tamper Attempts",
       value: stats?.recentTamperAttempts ?? 0,
       description: "Last 24 hours",
-      icon: AlertTriangle,
+      icon: IconAlertTriangle,
     },
   ]
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h1>
         <p className="text-muted-foreground">
-          Overview of your ChatLoka license system
+          Overview of your Chatloka license system
         </p>
       </div>
 

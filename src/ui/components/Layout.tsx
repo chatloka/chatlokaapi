@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react"
 import { Outlet, NavLink, useNavigate } from "react-router-dom"
 import {
-  LayoutDashboard,
-  Key,
-  Package,
-  ScrollText,
-  LogOut,
-  ChevronLeft,
-  ChevronRight,
-  User,
-  Menu,
-} from "lucide-react"
+  IconDashboard,
+  IconKey,
+  IconPackage,
+  IconReceipt,
+  IconLogout,
+  IconChevronLeft,
+  IconChevronRight,
+  IconUser,
+  IconMenu,
+} from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -32,10 +32,10 @@ import {
 } from "@/components/ui/avatar"
 
 const navItems = [
-  { to: "/manage", icon: LayoutDashboard, label: "Dashboard", end: true },
-  { to: "/manage/licenses", icon: Key, label: "Licenses" },
-  { to: "/manage/plugins", icon: Package, label: "Plugins" },
-  { to: "/manage/logs", icon: ScrollText, label: "Logs" },
+  { to: "/manage", icon: IconDashboard, label: "Dashboard", end: true },
+  { to: "/manage/licenses", icon: IconKey, label: "Licenses" },
+  { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
+  { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
 ]
 
 const STORAGE_KEY = "sidebar_collapsed"
@@ -96,14 +96,14 @@ export function Layout() {
     <TooltipProvider>
       <div className="flex h-screen overflow-hidden bg-background">
         {/* Mobile top bar */}
-        <div className="fixed top-0 left-0 right-0 z-40 flex h-14 items-center border-b bg-background px-4 md:hidden">
+        <div className="fixed top-0 left-0 right-0 z-40 flex h-14 items-center border-b border-border bg-background px-4 md:hidden">
           <Button
             variant="ghost"
             size="icon"
             className="cursor-pointer"
             onClick={() => setMobileOpen(true)}
           >
-            <Menu className="h-5 w-5" />
+            <IconMenu className="h-5 w-5" />
           </Button>
           <span className="ml-2 text-lg font-semibold">Chatloka</span>
         </div>
@@ -119,7 +119,7 @@ export function Layout() {
         {/* Sidebar */}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-sidebar text-sidebar-foreground transition-all duration-300",
+            "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-300",
             collapsed ? "w-[3rem]" : "w-64",
             mobileOpen
               ? "translate-x-0"
@@ -127,7 +127,7 @@ export function Layout() {
           )}
         >
           {/* Header */}
-          <div className="flex h-14 items-center border-b px-4">
+          <div className="flex h-14 items-center border-b border-sidebar-border px-4">
             {!collapsed && (
               <span className="text-lg font-semibold">Chatloka</span>
             )}
@@ -141,9 +141,9 @@ export function Layout() {
               )}
             >
               {collapsed ? (
-                <ChevronRight className="h-4 w-4" />
+                <IconChevronRight className="h-4 w-4" />
               ) : (
-                <ChevronLeft className="h-4 w-4" />
+                <IconChevronLeft className="h-4 w-4" />
               )}
             </Button>
           </div>
@@ -162,16 +162,16 @@ export function Layout() {
                           onClick={() => setMobileOpen(false)}
                           className={({ isActive }) =>
                             cn(
-                              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                              "flex items-center justify-center rounded-md p-2 text-sm font-medium transition-colors cursor-pointer",
                               isActive
-                                ? "bg-primary/15 text-primary"
-                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                ? "bg-sidebar-primary/15 text-sidebar-primary"
+                                : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                             )
                           }
                         />
                       }
                     >
-                      <item.icon className="h-4 w-4 shrink-0" />
+                      <item.icon className="h-5 w-5" />
                     </TooltipTrigger>
                     <TooltipContent side="right">
                       {item.label}
@@ -190,12 +190,12 @@ export function Layout() {
                     cn(
                       "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
                       isActive
-                        ? "bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        ? "bg-sidebar-primary/15 text-sidebar-primary"
+                        : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     )
                   }
                 >
-                  <item.icon className="h-4 w-4 shrink-0" />
+                  <item.icon className="h-5 w-5 shrink-0" />
                   <span>{item.label}</span>
                 </NavLink>
               )
@@ -203,7 +203,7 @@ export function Layout() {
           </nav>
 
           {/* User Menu */}
-          <div className="border-t p-2">
+          <div className="border-t border-sidebar-border p-2">
             {collapsed ? (
               <Tooltip>
                 <TooltipTrigger
@@ -211,7 +211,7 @@ export function Layout() {
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         render={
-                          <button className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-muted transition-colors cursor-pointer" />
+                          <button className="flex w-full items-center justify-center rounded-md p-2 text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors cursor-pointer" />
                         }
                       >
                         <Avatar size="sm">
@@ -228,15 +228,15 @@ export function Layout() {
                           onClick={() => { setMobileOpen(false); navigate("/manage/profile") }}
                           className="cursor-pointer"
                         >
-                          <User className="mr-2 h-4 w-4" />
+                          <IconUser className="mr-2 h-4 w-4" />
                           Profile
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={handleLogout}
-                          className="cursor-pointer text-destructive focus:text-destructive"
+                          className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive"
                         >
-                          <LogOut className="mr-2 h-4 w-4" />
+                          <IconLogout className="mr-2 h-4 w-4" />
                           Logout
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -251,7 +251,7 @@ export function Layout() {
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted transition-colors cursor-pointer" />
+                    <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors cursor-pointer" />
                   }
                 >
                   <Avatar size="sm">
@@ -267,15 +267,15 @@ export function Layout() {
                     onClick={() => { setMobileOpen(false); navigate("/manage/profile") }}
                     className="cursor-pointer"
                   >
-                    <User className="mr-2 h-4 w-4" />
+                    <IconUser className="mr-2 h-4 w-4" />
                     Profile
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={handleLogout}
-                    className="cursor-pointer text-destructive focus:text-destructive"
+                    className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive"
                   >
-                    <LogOut className="mr-2 h-4 w-4" />
+                    <IconLogout className="mr-2 h-4 w-4" />
                     Logout
                   </DropdownMenuItem>
                 </DropdownMenuContent>
