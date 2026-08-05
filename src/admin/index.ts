@@ -42,21 +42,37 @@ adminRoutes.use("*", async (c, next) => {
 adminRoutes.get("/stats", async (c) => {
   const db = c.env.DB;
 
-  const [licensesResult, pluginsResult, tamperResult] = await db.batch([
-    db.prepare("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active FROM licenses"),
-    db.prepare("SELECT COUNT(DISTINCT slug) as total FROM plugin_versions"),
+  const [licensesResult, pluginsResult, tamperResult, recentLicenses, latestTamper, apiStats] = await db.batch([
+    db.prepare("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active, SUM(CASE WHEN status = 'deactivated' THEN 1 ELSE 0 END) as deactivated, SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) as suspended FROM licenses"),
+    db.prepare("SELECT COUNT(DISTINCT slug) as total, COUNT(*) as totalVersions FROM plugin_versions"),
     db.prepare("SELECT COUNT(*) as total FROM tamper_logs WHERE created_at > datetime('now', '-24 hours')"),
+    db.prepare("SELECT id, purchase_code, domain, status, buyer_email, last_validated_at, created_at FROM licenses ORDER BY created_at DESC LIMIT 5"),
+    db.prepare("SELECT id, domain, failures, ip, created_at FROM tamper_logs ORDER BY created_at DESC LIMIT 5"),
+    db.prepare(`SELECT COUNT(*) as total_24h, SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) as success, SUM(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 ELSE 0 END) as client_error, SUM(CASE WHEN status_code >= 500 THEN 1 ELSE 0 END) as server_error, AVG(response_time_ms) as avg_response FROM api_logs WHERE created_at > datetime('now', '-24 hours')`),
   ]);
 
-  const licenses = licensesResult.results?.[0] as { total: number; active: number } | undefined;
-  const plugins = pluginsResult.results?.[0] as { total: number } | undefined;
+  const licenses = licensesResult.results?.[0] as { total: number; active: number; deactivated: number; suspended: number } | undefined;
+  const plugins = pluginsResult.results?.[0] as { total: number; totalVersions: number } | undefined;
   const tamper = tamperResult.results?.[0] as { total: number } | undefined;
+  const api = apiStats.results?.[0] as { total_24h: number; success: number; client_error: number; server_error: number; avg_response: number } | undefined;
 
   return c.json({
     totalLicenses: licenses?.total || 0,
     activeLicenses: licenses?.active || 0,
+    deactivatedLicenses: licenses?.deactivated || 0,
+    suspendedLicenses: licenses?.suspended || 0,
     totalPlugins: plugins?.total || 0,
+    totalPluginVersions: plugins?.totalVersions || 0,
     recentTamperAttempts: tamper?.total || 0,
+    apiStats: {
+      total24h: api?.total_24h || 0,
+      success: api?.success || 0,
+      clientError: api?.client_error || 0,
+      serverError: api?.server_error || 0,
+      avgResponse: api?.avg_response || 0,
+    },
+    recentLicenses: recentLicenses.results || [],
+    latestTamper: latestTamper.results || [],
   });
 });
 
@@ -311,10 +327,24 @@ adminRoutes.get("/logs/tamper", async (c) => {
   const page = parseInt(c.req.query("page") || "1", 10);
   const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
   const offset = (page - 1) * limit;
+  const search = c.req.query("search") || "";
+  const sort = c.req.query("sort") || "newest";
+
+  let whereClause = "";
+  const bindings: (string | number)[] = [];
+  if (search) {
+    whereClause = "WHERE domain LIKE ? OR ip LIKE ?";
+    bindings.push(`%${search}%`, `%${search}%`);
+  }
+
+  const orderClause = sort === "oldest" ? "ASC" : "DESC";
+
+  const countStmt = `SELECT COUNT(*) as total FROM tamper_logs ${whereClause}`;
+  const dataStmt = `SELECT * FROM tamper_logs ${whereClause} ORDER BY created_at ${orderClause} LIMIT ? OFFSET ?`;
 
   const [logsResult, countResult] = await db.batch([
-    db.prepare("SELECT * FROM tamper_logs ORDER BY created_at DESC LIMIT ? OFFSET ?").bind(limit, offset),
-    db.prepare("SELECT COUNT(*) as total FROM tamper_logs"),
+    db.prepare(dataStmt).bind(...bindings, limit, offset),
+    db.prepare(countStmt).bind(...bindings),
   ]);
 
   const total = (countResult.results?.[0] as { total: number })?.total || 0;

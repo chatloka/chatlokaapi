@@ -73,8 +73,8 @@ export function Layout() {
       try {
         const res = await fetch("/api/auth/get-session", { credentials: "include" })
         if (res.ok) {
-          const data = await res.json() as { session: { user: { name: string; email: string } } }
-          setUser(data.session.user)
+          const data = await res.json() as { user: { name: string; email: string } }
+          setUser(data.user)
         }
       } catch { /* ignore */ }
     }
@@ -234,9 +234,9 @@ export function Layout() {
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={handleLogout}
-                          className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive [&>svg]:text-destructive"
+                          className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive"
                         >
-                          <IconLogout className="mr-2 h-4 w-4 text-destructive" />
+                          <IconLogout className="mr-2 h-4 w-4 !text-destructive" />
                           Logout
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -273,9 +273,9 @@ export function Layout() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={handleLogout}
-                    className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive [&>svg]:text-destructive"
+                    className="cursor-pointer text-destructive hover:text-destructive focus:text-destructive"
                   >
-                    <IconLogout className="mr-2 h-4 w-4 text-destructive" />
+                    <IconLogout className="mr-2 h-4 w-4 !text-destructive" />
                     Logout
                   </DropdownMenuItem>
                 </DropdownMenuContent>

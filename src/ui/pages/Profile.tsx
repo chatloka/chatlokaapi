@@ -23,10 +23,8 @@ interface UserProfile {
 }
 
 interface SessionResponse {
-  session: {
-    user: UserProfile
-    session: { id: string; expiresAt: string }
-  }
+  user: UserProfile
+  session: { id: string; expiresAt: string }
 }
 
 export function Profile() {
@@ -52,7 +50,7 @@ export function Profile() {
         })
         if (res.ok) {
           const data: SessionResponse = await res.json()
-          setUser(data.session.user)
+          setUser(data.user)
         }
       } catch {
         console.error("Failed to fetch session")
@@ -119,7 +117,7 @@ export function Profile() {
   const fallbackChar = user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?"
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Profile</h1>
         <p className="text-muted-foreground">

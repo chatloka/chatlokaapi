@@ -33,6 +33,13 @@ import {
   IconSearch,
   IconChevronLeft,
   IconChevronRight,
+  IconChartBar,
+  IconCheck,
+  IconAlertCircle,
+  IconServer,
+  IconClock,
+  IconWorld,
+  IconFilter,
 } from "@tabler/icons-react"
 
 interface ApiLog {
@@ -86,6 +93,11 @@ interface LogStats {
   max_response_time: number
 }
 
+function toWIB(dateStr: string) {
+  const d = new Date(dateStr)
+  return d.toLocaleString("en-GB", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
+}
+
 export function Logs() {
   const [apiLogs, setApiLogs] = useState<ApiLog[]>([])
   const [tamperLogs, setTamperLogs] = useState<TamperLog[]>([])
@@ -97,14 +109,18 @@ export function Logs() {
   const [sort, setSort] = useState("newest")
   const [activeTab, setActiveTab] = useState("api")
 
+  const [tamperSearch, setTamperSearch] = useState("")
+  const [tamperSort, setTamperSort] = useState("newest")
+
   const fetchLogs = useCallback(async () => {
     setLoading(true)
     try {
       const searchParam = search ? `&search=${encodeURIComponent(search)}` : ""
+      const tamperSearchParam = tamperSearch ? `&search=${encodeURIComponent(tamperSearch)}` : ""
 
       const [apiRes, tamperRes] = await Promise.all([
         fetch(`/manage/api/logs?page=${apiPagination.page}&limit=${apiPagination.limit}&sort=${sort}${searchParam}`, { credentials: "include" }),
-        fetch(`/manage/api/logs/tamper?page=${tamperPagination.page}&limit=${tamperPagination.limit}`, { credentials: "include" }),
+        fetch(`/manage/api/logs/tamper?page=${tamperPagination.page}&limit=${tamperPagination.limit}&sort=${tamperSort}${tamperSearchParam}`, { credentials: "include" }),
       ])
 
       if (apiRes.ok) {
@@ -123,7 +139,7 @@ export function Logs() {
     } finally {
       setLoading(false)
     }
-  }, [apiPagination.page, apiPagination.limit, tamperPagination.page, tamperPagination.limit, sort, search])
+  }, [apiPagination.page, apiPagination.limit, tamperPagination.page, tamperPagination.limit, sort, tamperSort, search, tamperSearch])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -153,9 +169,16 @@ export function Logs() {
   }
 
   function handleSearchKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter") {
-      handleSearch()
-    }
+    if (e.key === "Enter") handleSearch()
+  }
+
+  function handleTamperSearch() {
+    setTamperPagination(prev => ({ ...prev, page: 1 }))
+    fetchLogs()
+  }
+
+  function handleTamperSearchKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") handleTamperSearch()
   }
 
   function getStatusBadge(statusCode: number) {
@@ -198,7 +221,6 @@ export function Logs() {
       log.domain || "",
       `"${(log.user_agent || "").replace(/"/g, '""')}"`,
     ])
-
     const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n")
     const blob = new Blob([csv], { type: "text/csv" })
     const url = URL.createObjectURL(blob)
@@ -209,8 +231,25 @@ export function Logs() {
     URL.revokeObjectURL(url)
   }
 
+  function exportTamperCSV() {
+    const headers = ["Time", "Domain", "IP", "Failed Files"]
+    const rows = tamperLogs.map(log => [
+      new Date(log.created_at).toISOString(),
+      log.domain,
+      log.ip,
+      (() => { try { return JSON.parse(log.failures).join("; ") } catch { return "" } })(),
+    ])
+    const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n")
+    const blob = new Blob([csv], { type: "text/csv" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `tamper-logs-${new Date().toISOString().split("T")[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   function exportPDF() {
-    // Generate a simple HTML report and open in new tab for printing
     const html = `
 <!DOCTYPE html>
 <html>
@@ -286,14 +325,8 @@ export function Logs() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Logs</h1>
-          <p className="text-muted-foreground">
-            Monitor API traffic and security events
-          </p>
+          <p className="text-muted-foreground">Monitor API traffic and security events</p>
         </div>
-        <Button onClick={handleRefresh} variant="outline" className="cursor-pointer">
-          <IconRefresh className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {/* Stats Cards */}
@@ -301,48 +334,79 @@ export function Logs() {
         <div className="grid gap-4 grid-cols-2 md:grid-cols-5">
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold">{stats.total_requests}</div>
-              <p className="text-xs text-muted-foreground">Total Requests (24h)</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold">{stats.total_requests}</div>
+                  <p className="text-xs text-muted-foreground">Total Requests (24h)</p>
+                </div>
+                <IconChartBar className="h-8 w-8 text-muted-foreground/50" />
+              </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-emerald-500">{stats.success_count}</div>
-              <p className="text-xs text-muted-foreground">Success (2xx)</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-emerald-500">{stats.success_count}</div>
+                  <p className="text-xs text-muted-foreground">Success (2xx)</p>
+                </div>
+                <IconCheck className="h-8 w-8 text-emerald-500/50" />
+              </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-amber-500">{stats.client_error_count}</div>
-              <p className="text-xs text-muted-foreground">Client Error (4xx)</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-amber-500">{stats.client_error_count}</div>
+                  <p className="text-xs text-muted-foreground">Client Error (4xx)</p>
+                </div>
+                <IconAlertCircle className="h-8 w-8 text-amber-500/50" />
+              </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-red-500">{stats.server_error_count}</div>
-              <p className="text-xs text-muted-foreground">Server Error (5xx)</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold text-red-500">{stats.server_error_count}</div>
+                  <p className="text-xs text-muted-foreground">Server Error (5xx)</p>
+                </div>
+                <IconServer className="h-8 w-8 text-red-500/50" />
+              </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold">{Math.round(stats.avg_response_time || 0)}ms</div>
-              <p className="text-xs text-muted-foreground">Avg Response Time</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-bold">{Math.round(stats.avg_response_time || 0)}ms</div>
+                  <p className="text-xs text-muted-foreground">Avg Response Time</p>
+                </div>
+                <IconClock className="h-8 w-8 text-muted-foreground/50" />
+              </div>
             </CardContent>
           </Card>
         </div>
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="api" className="gap-2 cursor-pointer">
-            <IconReceipt className="h-4 w-4" />
-            API Logs ({apiPagination.total})
-          </TabsTrigger>
-          <TabsTrigger value="tamper" className="gap-2 cursor-pointer">
-            <IconAlertTriangle className="h-4 w-4" />
-            Tamper Attempts ({tamperPagination.total})
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="api" className="gap-2 cursor-pointer">
+              <IconReceipt className="h-4 w-4" />
+              API Logs ({apiPagination.total})
+            </TabsTrigger>
+            <TabsTrigger value="tamper" className="gap-2 cursor-pointer">
+              <IconAlertTriangle className="h-4 w-4" />
+              Tamper Attempts ({tamperPagination.total})
+            </TabsTrigger>
+          </TabsList>
+          <Button onClick={handleRefresh} variant="outline" size="sm" className="cursor-pointer">
+            <IconRefresh className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
 
         <TabsContent value="api">
           <Card>
@@ -415,16 +479,12 @@ export function Logs() {
                       <TableBody>
                         {filteredApiLogs.map((log) => (
                           <TableRow key={log.id}>
-                            <TableCell className="text-xs whitespace-nowrap">
-                              {new Date(log.created_at).toLocaleString()}
-                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">{toWIB(log.created_at)}</TableCell>
                             <TableCell>{getMethodBadge(log.method)}</TableCell>
                             <TableCell className="font-mono text-xs">{log.endpoint}</TableCell>
                             <TableCell>{getStatusBadge(log.status_code)}</TableCell>
                             <TableCell className="text-xs">{log.response_time_ms}ms</TableCell>
-                            <TableCell className="text-xs">
-                              {log.envato_time_ms ? `${log.envato_time_ms}ms` : "-"}
-                            </TableCell>
+                            <TableCell className="text-xs">{log.envato_time_ms ? `${log.envato_time_ms}ms` : "-"}</TableCell>
                             <TableCell className="font-mono text-xs">{log.ip_address}</TableCell>
                             <TableCell className="font-mono text-xs">{log.purchase_code || "-"}</TableCell>
                             <TableCell className="text-xs">{log.domain || "-"}</TableCell>
@@ -433,31 +493,16 @@ export function Logs() {
                       </TableBody>
                     </Table>
                   </div>
-                  {/* Pagination */}
                   <div className="flex items-center justify-between mt-4">
                     <p className="text-sm text-muted-foreground">
                       Showing {(apiPagination.page - 1) * apiPagination.limit + 1} to {Math.min(apiPagination.page * apiPagination.limit, apiPagination.total)} of {apiPagination.total}
                     </p>
                     <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={apiPagination.page <= 1}
-                        onClick={() => setApiPagination(prev => ({ ...prev, page: prev.page - 1 }))}
-                        className="cursor-pointer"
-                      >
+                      <Button variant="outline" size="sm" disabled={apiPagination.page <= 1} onClick={() => setApiPagination(prev => ({ ...prev, page: prev.page - 1 }))} className="cursor-pointer">
                         <IconChevronLeft className="h-4 w-4" />
                       </Button>
-                      <span className="text-sm">
-                        {apiPagination.page} / {apiPagination.totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={apiPagination.page >= apiPagination.totalPages}
-                        onClick={() => setApiPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                        className="cursor-pointer"
-                      >
+                      <span className="text-sm">{apiPagination.page} / {apiPagination.totalPages}</span>
+                      <Button variant="outline" size="sm" disabled={apiPagination.page >= apiPagination.totalPages} onClick={() => setApiPagination(prev => ({ ...prev, page: prev.page + 1 }))} className="cursor-pointer">
                         <IconChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
@@ -471,10 +516,40 @@ export function Logs() {
         <TabsContent value="tamper">
           <Card>
             <CardHeader>
-              <CardTitle>Tamper Attempts</CardTitle>
-              <CardDescription>
-                Detected file integrity violations
-              </CardDescription>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <IconAlertTriangle className="h-5 w-5" />
+                    Tamper Attempts
+                  </CardTitle>
+                  <CardDescription>Detected file integrity violations</CardDescription>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative">
+                    <IconSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search domain or IP..."
+                      value={tamperSearch}
+                      onChange={(e) => setTamperSearch(e.target.value)}
+                      onKeyDown={handleTamperSearchKeyDown}
+                      className="pl-8 w-full sm:w-64 cursor-text"
+                    />
+                  </div>
+                  <Select value={tamperSort} onValueChange={setTamperSort}>
+                    <SelectTrigger className="w-[160px] cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Newest first</SelectItem>
+                      <SelectItem value="oldest">Oldest first</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button onClick={exportTamperCSV} variant="outline" size="sm" className="cursor-pointer">
+                    <IconDownload className="mr-2 h-4 w-4" />
+                    CSV
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -492,65 +567,49 @@ export function Logs() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Time</TableHead>
-                          <TableHead>License ID</TableHead>
+                          <TableHead>
+                            <div className="flex items-center gap-1"><IconClock className="h-3 w-3" /> Time</div>
+                          </TableHead>
                           <TableHead>Domain</TableHead>
-                          <TableHead>Failed Files</TableHead>
                           <TableHead>IP</TableHead>
+                          <TableHead>Failed Files</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {tamperLogs.map((log) => (
                           <TableRow key={log.id}>
-                            <TableCell className="text-sm">
-                              {new Date(log.created_at).toLocaleString()}
-                            </TableCell>
-                            <TableCell>{log.license_id}</TableCell>
-                            <TableCell>{log.domain}</TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">{toWIB(log.created_at)}</TableCell>
+                            <TableCell className="font-mono text-xs">{log.domain}</TableCell>
+                            <TableCell className="font-mono text-xs">{log.ip}</TableCell>
                             <TableCell>
                               <div className="flex flex-wrap gap-1">
-                                {JSON.parse(log.failures).map(
-                                  (file: string, i: number) => (
-                                    <Badge key={i} variant="destructive">
-                                      {file}
-                                    </Badge>
-                                  )
-                                )}
+                                {(() => {
+                                  try {
+                                    const files = JSON.parse(log.failures)
+                                    return files.map((file: string, i: number) => (
+                                      <Badge key={i} variant="destructive" className="text-[10px]">{file.split("/").pop()}</Badge>
+                                    ))
+                                  } catch {
+                                    return <Badge variant="destructive">Error parsing</Badge>
+                                  }
+                                })()}
                               </div>
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {log.ip}
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
                   </div>
-                  {/* Pagination */}
                   <div className="flex items-center justify-between mt-4">
                     <p className="text-sm text-muted-foreground">
                       Showing {(tamperPagination.page - 1) * tamperPagination.limit + 1} to {Math.min(tamperPagination.page * tamperPagination.limit, tamperPagination.total)} of {tamperPagination.total}
                     </p>
                     <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={tamperPagination.page <= 1}
-                        onClick={() => setTamperPagination(prev => ({ ...prev, page: prev.page - 1 }))}
-                        className="cursor-pointer"
-                      >
+                      <Button variant="outline" size="sm" disabled={tamperPagination.page <= 1} onClick={() => setTamperPagination(prev => ({ ...prev, page: prev.page - 1 }))} className="cursor-pointer">
                         <IconChevronLeft className="h-4 w-4" />
                       </Button>
-                      <span className="text-sm">
-                        {tamperPagination.page} / {tamperPagination.totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={tamperPagination.page >= tamperPagination.totalPages}
-                        onClick={() => setTamperPagination(prev => ({ ...prev, page: prev.page + 1 }))}
-                        className="cursor-pointer"
-                      >
+                      <span className="text-sm">{tamperPagination.page} / {tamperPagination.totalPages}</span>
+                      <Button variant="outline" size="sm" disabled={tamperPagination.page >= tamperPagination.totalPages} onClick={() => setTamperPagination(prev => ({ ...prev, page: prev.page + 1 }))} className="cursor-pointer">
                         <IconChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
