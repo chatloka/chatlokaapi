@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "build": "vite build",
+    "build": "vite build && node scripts/patch-wrangler.js",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "typecheck": "tsc --noEmit",
@@ -19,7 +19,6 @@
     "better-auth": "^1.6.26",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "hash-wasm": "^4.12.0",
     "hono": "^4.13.0",
     "lucide-react": "^1.28.0",
     "react": "^19.2.8",

@@ -2,10 +2,20 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "chatlokaapi",
   "main": "src/index.ts",
-  "compatibility_date": "2026-05-20",
+  "compatibility_date": "2026-08-05",
   "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true
+    }
+  },
   "assets": {
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
   },
   "vars": {
     "ENVIRONMENT": "production",
