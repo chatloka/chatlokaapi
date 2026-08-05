@@ -8,6 +8,7 @@ import { Plugins } from "./pages/Plugins"
 import { PluginDetail } from "./pages/PluginDetail"
 import { Logs } from "./pages/Logs"
 import { Profile } from "./pages/Profile"
+import { Mcp } from "./pages/Mcp"
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
         <Route path="plugins" element={<Plugins />} />
         <Route path="plugins/:slug" element={<PluginDetail />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="mcp" element={<Mcp />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="/" element={<Navigate to="/manage" replace />} />

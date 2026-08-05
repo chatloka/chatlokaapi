@@ -39,6 +39,7 @@ import {
   IconServer,
   IconClock,
 } from "@tabler/icons-react"
+import { CardTableSkeleton } from "@/components/Skeletons"
 
 interface ApiLog {
   id: number
@@ -436,6 +437,16 @@ export function Logs() {
                       <SelectItem value="oldest">Oldest first</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={String(apiPagination.limit)} onValueChange={(v) => setApiPagination(prev => ({ ...prev, limit: Number(v), page: 1 }))}>
+                    <SelectTrigger className="w-[100px] cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="20">20 / page</SelectItem>
+                      <SelectItem value="50">50 / page</SelectItem>
+                      <SelectItem value="100">100 / page</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button onClick={exportCSV} variant="outline" size="sm" className="cursor-pointer">
                     <IconDownload className="mr-2 h-4 w-4" />
                     CSV
@@ -449,9 +460,7 @@ export function Logs() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                </div>
+                <CardTableSkeleton rows={8} columns={9} />
               ) : filteredApiLogs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <IconReceipt className="h-12 w-12 mb-4" />
@@ -542,6 +551,16 @@ export function Logs() {
                       <SelectItem value="oldest">Oldest first</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Select value={String(tamperPagination.limit)} onValueChange={(v) => setTamperPagination(prev => ({ ...prev, limit: Number(v), page: 1 }))}>
+                    <SelectTrigger className="w-[100px] cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="20">20 / page</SelectItem>
+                      <SelectItem value="50">50 / page</SelectItem>
+                      <SelectItem value="100">100 / page</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button onClick={exportTamperCSV} variant="outline" size="sm" className="cursor-pointer">
                     <IconDownload className="mr-2 h-4 w-4" />
                     CSV
@@ -551,9 +570,7 @@ export function Logs() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                </div>
+                <CardTableSkeleton rows={5} columns={4} />
               ) : tamperLogs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <IconAlertTriangle className="h-12 w-12 mb-4" />

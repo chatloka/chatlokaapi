@@ -37,6 +37,18 @@ import {
   IconEye,
   IconSearch,
 } from "@tabler/icons-react"
+import { CardTableSkeleton } from "@/components/Skeletons"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  IconChevronLeft,
+  IconChevronRight,
+} from "@tabler/icons-react"
 
 interface Plugin {
   id: number
@@ -68,6 +80,8 @@ export function Plugins() {
     message: string
   } | null>(null)
   const [search, setSearch] = useState("")
+  const [pageSize, setPageSize] = useState(20)
+  const [page, setPage] = useState(1)
 
   const [slug, setSlug] = useState("")
   const [version, setVersion] = useState("")
@@ -185,6 +199,9 @@ export function Plugins() {
     slug.toLowerCase().includes(search.toLowerCase())
   )
 
+  const totalPages = Math.ceil(filteredSlugs.length / pageSize)
+  const paginatedSlugs = filteredSlugs.slice((page - 1) * pageSize, page * pageSize)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -216,14 +233,22 @@ export function Plugins() {
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-8 w-full sm:w-64 cursor-text"
               />
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1) }}>
+                <SelectTrigger className="w-[100px] cursor-pointer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="20">20 / page</SelectItem>
+                  <SelectItem value="50">50 / page</SelectItem>
+                  <SelectItem value="100">100 / page</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            </div>
+            <CardTableSkeleton rows={6} columns={5} />
           ) : filteredSlugs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <IconPackage className="h-12 w-12 mb-4" />
@@ -242,7 +267,7 @@ export function Plugins() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredSlugs.map(([slug, versions]) => {
+                  {paginatedSlugs.map(([slug, versions]) => {
                     const latest = versions.find((v) => v.is_latest)
                     return (
                       <TableRow key={slug}>
@@ -297,6 +322,22 @@ export function Plugins() {
                   })}
                 </TableBody>
               </Table>
+            </div>
+          )}
+          {!loading && filteredSlugs.length > 0 && (
+            <div className="flex items-center justify-between mt-4">
+              <p className="text-sm text-muted-foreground">
+                Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, filteredSlugs.length)} of {filteredSlugs.length} plugins
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="cursor-pointer">
+                  <IconChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm">{page} / {totalPages}</span>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} className="cursor-pointer">
+                  <IconChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

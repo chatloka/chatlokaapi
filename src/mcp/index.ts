@@ -307,7 +307,7 @@ export function createMcpServer(env: McpEnv) {
   )
 
   server.registerTool(
-    "generate_plugin_download",
+    "generate_plugin_download_link",
     {
       description: "Generate a download link for a plugin. Returns a URL and one-time JWT token. The client must use the token as X-Download-Token header to download the file.",
       inputSchema: z.object({

@@ -10,6 +10,7 @@ import {
   IconChevronRight,
   IconUser,
   IconMenu,
+  IconServer,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -36,6 +37,7 @@ const navItems = [
   { to: "/manage/licenses", icon: IconKey, label: "Licenses" },
   { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
   { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
+  { to: "/manage/mcp", icon: IconServer, label: "MCP" },
 ]
 
 const STORAGE_KEY = "sidebar_collapsed"

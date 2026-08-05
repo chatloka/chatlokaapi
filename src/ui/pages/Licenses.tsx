@@ -51,8 +51,11 @@ import {
   IconWorld,
   IconMail,
   IconClock,
+  IconChevronLeft,
+  IconChevronRight,
 } from "@tabler/icons-react"
 import { toast } from "sonner"
+import { CardTableSkeleton } from "@/components/Skeletons"
 
 interface License {
   id: number
@@ -83,6 +86,8 @@ export function Licenses() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState("newest")
+  const [pageSize, setPageSize] = useState(20)
+  const [page, setPage] = useState(1)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [selectedLicense, setSelectedLicense] = useState<License | null>(null)
@@ -199,7 +204,10 @@ export function Licenses() {
       default:
         return searched
     }
-  }, [licenses, search, sort])
+    }, [licenses, search, sort])
+
+  const totalPages = Math.ceil(filteredLicenses.length / pageSize)
+  const paginatedLicenses = filteredLicenses.slice((page - 1) * pageSize, page * pageSize)
 
   function getStatusBadge(status: string) {
     switch (status) {
@@ -265,13 +273,21 @@ export function Licenses() {
                 <SelectItem value="domain">Domain A-Z</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1) }}>
+              <SelectTrigger className="w-[100px] cursor-pointer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="20">20 / page</SelectItem>
+                <SelectItem value="50">50 / page</SelectItem>
+                <SelectItem value="100">100 / page</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            </div>
+            <CardTableSkeleton rows={8} columns={7} />
           ) : (
             <div className="overflow-x-auto">
               <Table>
@@ -295,7 +311,7 @@ export function Licenses() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredLicenses.map((license) => (
+                  {paginatedLicenses.map((license) => (
                     <TableRow key={license.id}>
                       <TableCell className="font-mono text-sm">{license.purchase_code}</TableCell>
                       <TableCell>{getTypeBadge(license.license_type)}</TableCell>
@@ -342,6 +358,22 @@ export function Licenses() {
                   ))}
                 </TableBody>
               </Table>
+            </div>
+          )}
+          {!loading && filteredLicenses.length > 0 && (
+            <div className="flex items-center justify-between mt-4">
+              <p className="text-sm text-muted-foreground">
+                Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, filteredLicenses.length)} of {filteredLicenses.length}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="cursor-pointer">
+                  <IconChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm">{page} / {totalPages}</span>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} className="cursor-pointer">
+                  <IconChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

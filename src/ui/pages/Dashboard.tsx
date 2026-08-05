@@ -28,6 +28,7 @@ import {
   IconEye,
 } from "@tabler/icons-react"
 import { useNavigate } from "react-router-dom"
+import { DashboardSkeleton } from "@/components/Skeletons"
 import {
   AreaChart,
   Area,
@@ -100,11 +101,7 @@ export function Dashboard() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    )
+    return <DashboardSkeleton />
   }
 
   const licensePieData = stats ? [

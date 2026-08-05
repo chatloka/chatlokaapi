@@ -25,6 +25,8 @@ import {
   IconCheck,
 } from "@tabler/icons-react"
 import { toast } from "sonner"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TableSkeleton } from "@/components/Skeletons"
 
 interface Plugin {
   id: number
@@ -99,8 +101,20 @@ export function PluginDetail() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      <div className="space-y-6">
+        <Skeleton className="h-9 w-32" />
+        <div className="rounded-lg border p-6 space-y-4">
+          <Skeleton className="h-6 w-40" />
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="space-y-2"><Skeleton className="h-4 w-16" /><Skeleton className="h-6 w-12" /></div>
+            <div className="space-y-2"><Skeleton className="h-4 w-16" /><Skeleton className="h-6 w-24" /></div>
+            <div className="md:col-span-2 space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-6 w-full" /></div>
+          </div>
+        </div>
+        <div className="rounded-lg border p-6">
+          <Skeleton className="h-6 w-32 mb-4" />
+          <TableSkeleton rows={4} columns={6} />
+        </div>
       </div>
     )
   }
