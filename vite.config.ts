@@ -12,15 +12,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
-  build: {
-    outDir: "dist",
-    rollupOptions: {
-      input: {
-        client: path.resolve(__dirname, "src/ui/index.html"),
-      },
+      "@": path.resolve(__dirname, "./src/ui"),
     },
   },
 })
