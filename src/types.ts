@@ -15,6 +15,7 @@ export interface CloudflareBindings {
   TURNSTILE_SECRET_KEY: string
   TURNSTILE_SITE_KEY: string
   PLUGINS_BUCKET: R2Bucket
+  MCP_API_KEY: string
   ASSETS: Fetcher
   RL_VALIDATE: RateLimit
   RL_ACTIVATE: RateLimit

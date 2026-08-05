@@ -9,6 +9,8 @@ import { getClientIp } from './http'
 import { signHs256, verifyHs256 } from './services/jwt'
 import { createAuth } from './auth'
 import { adminRoutes } from './admin'
+import { createMcpHandler } from '@modelcontextprotocol/server'
+import { createMcpServer } from './mcp'
 import { getMigrations } from 'better-auth/db/migration'
 import type {
   ActivateRequest,
@@ -638,6 +640,18 @@ app.all('/api/auth/*', async (c) => {
 
 // Admin API routes (protected by session middleware)
 app.route('/manage/api', adminRoutes)
+
+// MCP Server endpoint
+app.all('/mcp', async (c) => {
+  // Validate Bearer token
+  const auth = c.req.header('Authorization')
+  if (!auth || auth !== `Bearer ${c.env.MCP_API_KEY}`) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const handler = createMcpHandler(() => createMcpServer(c.env))
+  return handler(c.req.raw)
+})
 
 // SPA fallback - serve assets, fallback to index.html for client-side routing
 app.all('*', async (c) => {
