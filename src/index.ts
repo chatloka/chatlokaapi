@@ -575,8 +575,13 @@ app.get('/downloads/:filename', async (c) => {
 
 // Better Auth handler
 app.all('/api/auth/*', async (c) => {
-  const auth = createAuth(c.env)
-  return auth.handler(c.req.raw)
+  try {
+    const auth = createAuth(c.env)
+    return await auth.handler(c.req.raw)
+  } catch (err: any) {
+    console.error('[Better Auth]', err?.message || err)
+    return c.json({ success: false, message: err?.message || 'Auth error' }, 500)
+  }
 })
 
 // Admin API routes (protected by session middleware)
