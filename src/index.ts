@@ -642,16 +642,7 @@ app.all('/api/auth/*', async (c) => {
 app.route('/manage/api', adminRoutes)
 
 // MCP Server endpoint
-app.post('/mcp', async (c) => {
-  const auth = c.req.header('Authorization')
-  if (!auth || auth !== `Bearer ${c.env.MCP_API_KEY}`) {
-    return c.json({ error: 'Unauthorized' }, 401)
-  }
-  const handler = createMcpHandler(() => createMcpServer(c.env))
-  return handler.fetch(c.req.raw)
-})
-
-app.get('/mcp', async (c) => {
+app.all('/mcp', async (c) => {
   const auth = c.req.header('Authorization')
   if (!auth || auth !== `Bearer ${c.env.MCP_API_KEY}`) {
     return c.json({ error: 'Unauthorized' }, 401)
