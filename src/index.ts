@@ -650,7 +650,7 @@ app.all('/mcp', async (c) => {
   }
 
   const handler = createMcpHandler(() => createMcpServer(c.env))
-  return handler(c.req.raw)
+  return handler.fetch(c.req.raw)
 })
 
 // SPA fallback - serve assets, fallback to index.html for client-side routing
