@@ -8,6 +8,7 @@ import { AppUpdateService } from './services/appUpdate'
 import { ResendService } from './services/resend'
 import { TicketService } from './services/ticket'
 import type { Ticket } from './services/ticket'
+import { TelegramBotService } from './services/telegram'
 import { ContactService } from './services/contact'
 import { NotificationService } from './services/notification'
 import { requireValidLicense, type LicenseContextVariables } from './middleware/requireValidLicense'
@@ -1067,6 +1068,114 @@ async function sendTicketAcknowledgement(
   })
 }
 
+app.post('/api/webhooks/telegram', async (c) => {
+  const raw = await c.req.text()
+  const secret = c.req.header('X-Telegram-Bot-Api-Secret-Token') || ''
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
+
+  interface ParsedTelegramUpdate {
+    update_id?: number
+    message?: { chat?: { id?: number }; text?: string }
+    callback_query?: { message?: { chat?: { id?: number } }; from?: { id?: number }; data?: string }
+  }
+
+  let parsed: ParsedTelegramUpdate | null = null
+  try {
+    parsed = JSON.parse(raw) as ParsedTelegramUpdate
+  } catch {
+    /* invalid JSON handled below */
+  }
+
+  const updateId = parsed?.update_id
+  const chatId = parsed?.message?.chat?.id ?? parsed?.callback_query?.message?.chat?.id ?? parsed?.callback_query?.from?.id
+  const eventType = parsed?.callback_query ? 'callback_query' : parsed?.message ? 'message' : 'unknown'
+
+  // Verify secret token (set via TELEGRAM_WEBHOOK_SECRET). If the secret is not
+  // configured, fall back to accepting the update (defense-in-depth only).
+  const expectedSecret = c.env.TELEGRAM_WEBHOOK_SECRET
+  if (expectedSecret && secret !== expectedSecret) {
+    await logWebhook(c.env.DB, {
+      provider: 'telegram',
+      event_type: eventType,
+      telegram_update_id: updateId,
+      chat_id: chatId,
+      source_ip: ip,
+      raw_payload: raw,
+      handled: 0,
+      error_message: 'invalid_secret',
+    })
+    return c.json({ ok: false, error: 'Invalid secret token' }, 401)
+  }
+
+  if (!parsed) {
+    await logWebhook(c.env.DB, {
+      provider: 'telegram',
+      event_type: eventType,
+      telegram_update_id: updateId,
+      chat_id: chatId,
+      source_ip: ip,
+      raw_payload: raw,
+      handled: 0,
+      error_message: 'invalid_json',
+    })
+    return c.json({ ok: false, error: 'Invalid JSON' }, 400)
+  }
+
+  let handled = 1
+  let errorMessage: string | null = null
+  try {
+    const bot = new TelegramBotService(c.env)
+    await bot.handleUpdate(parsed as unknown as Parameters<TelegramBotService['handleUpdate']>[0], { raw })
+  } catch (err) {
+    handled = 0
+    errorMessage = err instanceof Error ? err.message : String(err)
+    console.error('[Telegram Webhook] Error:', err)
+  }
+
+  await logWebhook(c.env.DB, {
+    provider: 'telegram',
+    event_type: eventType,
+    telegram_update_id: updateId,
+    chat_id: chatId,
+    source_ip: ip,
+    raw_payload: raw,
+    handled,
+    error_message: errorMessage,
+  })
+
+  // Always 200 to prevent Telegram from retrying.
+  return c.json({ ok: true })
+})
+
+async function logWebhook(db: D1Database, entry: {
+  provider: string
+  event_type?: string
+  telegram_update_id?: number
+  chat_id?: number
+  source_ip?: string
+  raw_payload: string
+  handled: number
+  error_message?: string | null
+}): Promise<void> {
+  try {
+    await db.prepare(
+      `INSERT INTO webhook_logs (provider, event_type, telegram_update_id, chat_id, source_ip, raw_payload, handled, error_message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      entry.provider,
+      entry.event_type || null,
+      entry.telegram_update_id || null,
+      entry.chat_id || null,
+      entry.source_ip || null,
+      entry.raw_payload,
+      entry.handled,
+      entry.error_message || null,
+    ).run()
+  } catch (err) {
+    console.error('[Webhook Log] Failed to write:', err)
+  }
+}
+
 app.post('/api/webhooks/resend', async (c) => {
   try {
     const payload = await c.req.text()
@@ -1089,6 +1198,12 @@ app.post('/api/webhooks/resend', async (c) => {
 
     if (!isValid) {
       console.error('[Resend Webhook] Invalid signature')
+      await logWebhook(c.env.DB, {
+        provider: 'resend',
+        raw_payload: payload,
+        handled: 0,
+        error_message: 'invalid_signature',
+      })
       return c.json({ error: 'Invalid signature' }, 401)
     }
 
@@ -1096,6 +1211,13 @@ app.post('/api/webhooks/resend', async (c) => {
 
     // Only handle email.received events
     if (event.type !== 'email.received') {
+      await logWebhook(c.env.DB, {
+        provider: 'resend',
+        event_type: event.type || 'unknown',
+        source_ip: c.req.header('cf-connecting-ip') || 'unknown',
+        raw_payload: payload,
+        handled: 1,
+      })
       return c.json({ received: true })
     }
 
@@ -1115,6 +1237,14 @@ app.post('/api/webhooks/resend', async (c) => {
 
     if (!eventRecipients.includes(supportInbox)) {
       console.error(`[Resend Webhook] Ignoring email not addressed to ${supportInbox}`)
+      await logWebhook(c.env.DB, {
+        provider: 'resend',
+        event_type: 'email.received',
+        source_ip: c.req.header('cf-connecting-ip') || 'unknown',
+        raw_payload: payload,
+        handled: 0,
+        error_message: 'not_addressed_to_support',
+      })
       return c.json({ received: true })
     }
 
@@ -1145,6 +1275,14 @@ app.post('/api/webhooks/resend', async (c) => {
     // support staff's own messages in the thread.
     if (senderEmail === supportInbox) {
       console.error(`[Resend Webhook] Ignoring echo from support inbox (${senderEmail})`)
+      await logWebhook(c.env.DB, {
+        provider: 'resend',
+        event_type: 'email.received',
+        source_ip: c.req.header('cf-connecting-ip') || 'unknown',
+        raw_payload: payload,
+        handled: 0,
+        error_message: 'support_inbox_echo',
+      })
       return c.json({ received: true })
     }
 
@@ -1358,6 +1496,26 @@ app.post('/api/webhooks/resend', async (c) => {
       fromEmail: event.data.from,
       timestamp: new Date().toISOString(),
       unreadCount,
+    })
+
+    // Push a Telegram notification to the admin chat (if the bot is configured)
+    try {
+      const telegramBot = new TelegramBotService(c.env)
+      await telegramBot.notifyTicketEvent({
+        type: notifyType,
+        ticket,
+        message: messagePreview,
+      })
+    } catch (tgErr) {
+      console.error('[Resend Webhook] Failed to notify Telegram:', tgErr)
+    }
+
+    await logWebhook(c.env.DB, {
+      provider: 'resend',
+      event_type: 'email.received',
+      source_ip: c.req.header('cf-connecting-ip') || 'unknown',
+      raw_payload: payload,
+      handled: 1,
     })
 
     return c.json({ received: true })

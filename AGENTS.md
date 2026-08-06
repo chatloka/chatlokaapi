@@ -105,6 +105,7 @@ chatlokaapi/
 │   ├── services/
 │   │   ├── license.ts        # LicenseService (D1 CRUD + tamper detection)
 │   │   ├── plugin.ts         # PluginService (D1 + R2)
+│   │   ├── telegram.ts       # Telegram bot (Bot API client + TelegramBotService)
 │   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens)
 │   ├── mcp/
 │   │   └── index.ts          # MCP server (40 tools, Streamable HTTP)
@@ -125,6 +126,7 @@ chatlokaapi/
 │           ├── PluginDetail.tsx # Per-plugin versions
 │           ├── Logs.tsx       # API logs + tamper logs tabs
 │           ├── Mcp.tsx        # MCP documentation page
+│           ├── Telegram.tsx   # Telegram bot admin (config, webhook logs, bot logs)
 │           └── Profile.tsx    # User info, password change
 ├── migrations/                # D1 SQL migrations
 ├── scripts/
@@ -168,6 +170,8 @@ chatlokaapi/
 | GET | `/api/plugins/token` | Get plugin download token | 20/min |
 | GET | `/downloads/:token` | Download plugin zip from R2 | 60/min |
 | GET | `/api/stats` | Public stats (license counts, tamper, recent) | — |
+| POST | `/api/webhooks/telegram` | Telegram bot webhook (secret-token verified) | — |
+| POST | `/api/webhooks/resend` | Resend inbound email webhook (svix verified) | — |
 | GET | `/api/auth/*` | Better Auth public endpoints | — |
 
 ### Admin (session cookie required)
@@ -185,6 +189,13 @@ chatlokaapi/
 | GET | `/manage/api/logs/stats` | 24h API stats |
 | GET | `/manage/api/logs/endpoints` | Distinct endpoints |
 | GET | `/manage/api/logs/tamper` | Tamper detection logs (search, sort, page, limit) |
+| GET | `/manage/api/logs/webhooks` | Webhook payload logs (provider, handled, page, limit) |
+| GET | `/manage/api/telegram/overview` | Telegram bot overview (config, stats, providers, top actions) |
+| GET | `/manage/api/telegram/bot-logs` | Telegram bot action logs (action, sort, page, limit) |
+| GET | `/manage/api/telegram/webhook-info` | Current Telegram webhook + bot info |
+| POST | `/manage/api/telegram/set-webhook` | Register `{base}/api/webhooks/telegram` |
+| POST | `/manage/api/telegram/delete-webhook` | Remove the Telegram webhook |
+| POST | `/manage/api/telegram/test` | Send a test message to the admin chat |
 | GET | `/manage/api/mcp-servers` | MCP server API keys |
 
 ### MCP (Bearer token required)
@@ -263,6 +274,9 @@ chatlokaapi/
 | `plugin_versions` | Plugin version registry (slug, version, checksum, download_count) |
 | `plugin_download_logs` | Plugin download history |
 | `mcp_servers` | MCP server API keys |
+| `webhook_logs` | Raw webhook payloads (telegram + resend) |
+| `telegram_bot_logs` | Telegram bot action audit trail |
+| `telegram_chat_state` | Per-chat multi-step state (reply flow) |
 | `user` | Better Auth users |
 | `session` | Better Auth sessions |
 | `account` | Better Auth accounts |
@@ -280,6 +294,8 @@ chatlokaapi/
 | `RSA_PRIVATE_KEY` | RSA key for token signing |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile secret (currently unused — captcha disabled) |
 | `MCP_API_KEY` | Bearer token for MCP endpoint authentication |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (`@chatlokaapibot`) |
+| `TELEGRAM_WEBHOOK_SECRET` | Secret token sent in `X-Telegram-Bot-Api-Secret-Token` header |
 
 ---
 
@@ -292,6 +308,8 @@ chatlokaapi/
 | `ENVATO_API_URL` | `https://envatoapi.chatloka.net/v3/market` |
 | `BETTER_AUTH_URL` | `https://api.chatloka.net` |
 | `TURNSTILE_SITE_KEY` | `0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM` |
+| `TELEGRAM_ADMIN_CHAT_ID` | `7463670864` (admin chat — satu-satunya chat yang mengaktifkan bot) |
+| `TELEGRAM_BOT_USERNAME` | `chatlokaapibot` |
 
 ---
 
@@ -359,6 +377,9 @@ run_worker_first: ["/api/*", "/manage/api/*", "/downloads/*", "/mcp"]
 
 ### MCP returns 405 Method Not Allowed
 `/mcp` must be in the `run_worker_first` array in `scripts/patch-wrangler.js`. All HTTP methods (GET, POST, etc.) must be handled — use `app.all('/mcp')`.
+
+### Telegram webhook not firing
+`/api/webhooks/telegram` lives under `/api/*` (already in `run_worker_first`), so it reaches the worker. The bot only reacts to the chat id in `TELEGRAM_ADMIN_CHAT_ID`; other chats are logged as `ignored_chat`. Register webhook via the admin panel (Telegram page → Register Webhook) or the Bot API `setWebhook` with the `X-Telegram-Bot-Api-Secret-Token` header matching `TELEGRAM_WEBHOOK_SECRET`.
 
 ### D1 schema changes not reflected
 Better Auth calls `getMigrations()` before each auth handler request. D1 migrations must be applied via `wrangler d1 migrations apply chatloka`.

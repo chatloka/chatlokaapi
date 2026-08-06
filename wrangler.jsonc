@@ -24,7 +24,9 @@
     "BETTER_AUTH_URL": "https://api.chatloka.net",
     "TICKET_FROM_NAME": "Chatloka Support",
     "TICKET_FROM_EMAIL": "contact@support.chatloka.net",
-    "TURNSTILE_SITE_KEY": "0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM"
+    "TURNSTILE_SITE_KEY": "0x4AAAAAADbNEcF-YAzBslQ5k-DCBhlyqFM",
+    "TELEGRAM_ADMIN_CHAT_ID": "7463670864",
+    "TELEGRAM_BOT_USERNAME": "chatlokaapibot"
   },
   "secrets": {
     "required": [
@@ -32,7 +34,9 @@
       "RSA_PRIVATE_KEY",
       "ENVATO_PERSONAL_TOKEN",
       "BETTER_AUTH_SECRET",
-      "TURNSTILE_SECRET_KEY"
+      "TURNSTILE_SECRET_KEY",
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET"
     ]
   },
   "d1_databases": [

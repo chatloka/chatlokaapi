@@ -21,6 +21,10 @@ export interface CloudflareBindings {
   TICKET_FROM_NAME?: string
   TICKET_FROM_EMAIL?: string
   REALTIME_DO: DurableObjectNamespace
+  TELEGRAM_BOT_TOKEN?: string
+  TELEGRAM_ADMIN_CHAT_ID?: number | string
+  TELEGRAM_WEBHOOK_SECRET?: string
+  TELEGRAM_BOT_USERNAME?: string
   ASSETS: Fetcher
   RL_VALIDATE: RateLimit
   RL_ACTIVATE: RateLimit

@@ -24,6 +24,7 @@ import { UserDetail } from "./pages/UserDetail"
 import { Tickets } from "./pages/Tickets"
 import { TicketDetail } from "./pages/TicketDetail"
 import { TicketAnalyticsPage } from "./pages/TicketAnalytics"
+import { Telegram } from "./pages/Telegram"
 
 function RootLayout() {
   return (
@@ -59,6 +60,7 @@ const router = createBrowserRouter(
         <Route path="tickets/:ticketNumber" element={<TicketDetail />} />
         <Route path="mcp" element={<Mcp />} />
         <Route path="mcp/tools/:toolName" element={<McpToolDetail />} />
+        <Route path="telegram" element={<Telegram />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="/" element={<Navigate to="/manage" replace />} />

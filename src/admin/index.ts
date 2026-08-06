@@ -6,6 +6,7 @@ import { NotificationService } from "../services/notification";
 import { ResendService } from "../services/resend";
 import { ContactService } from "../services/contact";
 import { EnvatoService } from "../services/envato";
+import { TelegramBotService } from "../services/telegram";
 import { broadcastRealtime } from "../realtime/hub";
 import type { CloudflareBindings } from "../types";
 
@@ -1331,4 +1332,190 @@ adminRoutes.post("/notifications/read-all", async (c) => {
   });
 
   return c.json({ success: true, marked });
+});
+
+// ============================================================
+// Telegram bot administration
+// ============================================================
+
+adminRoutes.get("/telegram/overview", async (c) => {
+  const db = c.env.DB;
+  const bot = new TelegramBotService(c.env);
+
+  const [botLogs, webhookStats, botLogStats, authStats, chatState] = await db.batch([
+    db.prepare("SELECT COUNT(*) as total FROM telegram_bot_logs"),
+    db.prepare("SELECT provider, COUNT(*) as total, MAX(created_at) as last_event FROM webhook_logs GROUP BY provider"),
+    db.prepare("SELECT action, COUNT(*) as total FROM telegram_bot_logs GROUP BY action ORDER BY total DESC"),
+    db.prepare("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors FROM telegram_bot_logs"),
+    db.prepare("SELECT COUNT(*) as total FROM telegram_chat_state"),
+  ]);
+
+  const activeChats = (chatState.results?.[0] as { total: number })?.total || 0;
+  const totals = (authStats.results?.[0] as { total: number; errors: number }) || { total: 0, errors: 0 };
+  const botLogTotal = (botLogs.results?.[0] as { total: number })?.total || 0;
+
+  return c.json({
+    configured: bot.configured,
+    botUsername: c.env.TELEGRAM_BOT_USERNAME || null,
+    adminChatId: c.env.TELEGRAM_ADMIN_CHAT_ID ? String(c.env.TELEGRAM_ADMIN_CHAT_ID) : null,
+    webhookSecret: Boolean(c.env.TELEGRAM_WEBHOOK_SECRET),
+    webhookUrl: `${c.env.API_BASE_URL || "https://api.chatloka.net"}/api/webhooks/telegram`,
+    totals: {
+      botLogs: botLogTotal,
+      botSuccess: botLogTotal - totals.errors,
+      botErrors: totals.errors,
+      activeChatStates: activeChats,
+    },
+    providers: webhookStats.results || [],
+    actions: (botLogStats.results || []) as { action: string; total: number }[],
+  });
+});
+
+adminRoutes.get("/logs/webhooks", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const offset = (page - 1) * limit;
+  const provider = c.req.query("provider") || "";
+  const handled = c.req.query("handled") || "";
+  const sort = c.req.query("sort") || "newest";
+
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  const countParams: unknown[] = [];
+
+  if (provider) {
+    clauses.push("provider = ?");
+    params.push(provider);
+    countParams.push(provider);
+  }
+  if (handled === "0" || handled === "1") {
+    clauses.push("handled = ?");
+    params.push(parseInt(handled, 10));
+    countParams.push(parseInt(handled, 10));
+  }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const orderClause = sort === "oldest" ? "ASC" : "DESC";
+  const [logsResult, countResult] = await db.batch([
+    db.prepare(`SELECT * FROM webhook_logs ${where} ORDER BY created_at ${orderClause} LIMIT ? OFFSET ?`).bind(...params, limit, offset),
+    db.prepare(`SELECT COUNT(*) as total FROM webhook_logs ${where}`).bind(...countParams),
+  ]);
+
+  const total = (countResult.results?.[0] as { total: number })?.total || 0;
+
+  return c.json({
+    logs: logsResult.results,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+adminRoutes.get("/telegram/bot-logs", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const offset = (page - 1) * limit;
+  const action = c.req.query("action") || "";
+  const sort = c.req.query("sort") || "newest";
+
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  const countParams: unknown[] = [];
+
+  if (action) {
+    clauses.push("action = ?");
+    params.push(action);
+    countParams.push(action);
+  }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const orderClause = sort === "oldest" ? "ASC" : "DESC";
+  const [logsResult, countResult] = await db.batch([
+    db.prepare(`SELECT * FROM telegram_bot_logs ${where} ORDER BY created_at ${orderClause} LIMIT ? OFFSET ?`).bind(...params, limit, offset),
+    db.prepare(`SELECT COUNT(*) as total FROM telegram_bot_logs ${where}`).bind(...countParams),
+  ]);
+
+  const total = (countResult.results?.[0] as { total: number })?.total || 0;
+
+  return c.json({
+    logs: logsResult.results,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
+adminRoutes.get("/telegram/webhook-info", async (c) => {
+  const bot = new TelegramBotService(c.env);
+  const api = bot.apiClient;
+  if (!api) {
+    return c.json({ error: "TELEGRAM_BOT_TOKEN is not configured" }, 400);
+  }
+  const info = await api.getWebhookInfo();
+  const me = await api.getMe();
+  return c.json({
+    webhook: info,
+    bot: me || null,
+    configuredUrl: `${c.env.API_BASE_URL || "https://api.chatloka.net"}/api/webhooks/telegram`,
+  });
+});
+
+adminRoutes.post("/telegram/set-webhook", async (c) => {
+  const bot = new TelegramBotService(c.env);
+  const api = bot.apiClient;
+  if (!api) {
+    return c.json({ error: "TELEGRAM_BOT_TOKEN is not configured" }, 400);
+  }
+  const webhookUrl = `${c.env.API_BASE_URL || "https://api.chatloka.net"}/api/webhooks/telegram`;
+  const result = await api.setWebhook({
+    url: webhookUrl,
+    ...(c.env.TELEGRAM_WEBHOOK_SECRET ? { secret_token: c.env.TELEGRAM_WEBHOOK_SECRET } : {}),
+    allowed_updates: ["message", "callback_query"],
+    max_connections: 40,
+  });
+  return c.json({
+    success: result.ok,
+    description: result.description,
+    error_code: result.error_code,
+    url: webhookUrl,
+  });
+});
+
+adminRoutes.post("/telegram/delete-webhook", async (c) => {
+  const bot = new TelegramBotService(c.env);
+  const api = bot.apiClient;
+  if (!api) {
+    return c.json({ error: "TELEGRAM_BOT_TOKEN is not configured" }, 400);
+  }
+  const result = await api.deleteWebhook();
+  return c.json({ success: result.ok, description: result.description, error_code: result.error_code });
+});
+
+adminRoutes.post("/telegram/test", async (c) => {
+  const bot = new TelegramBotService(c.env);
+  if (!bot.configured) {
+    return c.json({ error: "Telegram bot tidak dikonfigurasi (token / admin chat id)" }, 400);
+  }
+  const chatId = bot.adminChatId;
+  if (chatId === undefined) {
+    return c.json({ error: "TELEGRAM_ADMIN_CHAT_ID missing" }, 400);
+  }
+  const api = bot.apiClient;
+  if (!api) {
+    return c.json({ error: "TELEGRAM_BOT_TOKEN missing" }, 400);
+  }
+  const sent = await api.sendMessage(
+    chatId,
+    "<b>✅ Chatloka Bot terhubung!</b>\n\nMenekan <code>/start</code> untuk menguji.",
+    { parse_mode: "HTML" },
+  );
+  return c.json({ success: Boolean(sent?.message_id), messageId: sent?.message_id });
 });
