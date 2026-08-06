@@ -25,6 +25,8 @@ import { Tickets } from "./pages/Tickets"
 import { TicketDetail } from "./pages/TicketDetail"
 import { TicketAnalyticsPage } from "./pages/TicketAnalytics"
 import { Telegram } from "./pages/Telegram"
+import { FileManager } from "./pages/FileManager"
+import { MarkdownPreview } from "./pages/MarkdownPreview"
 import { WebhookLogs } from "./pages/WebhookLogs"
 import { WebhookLogDetail } from "./pages/WebhookLogDetail"
 
@@ -56,6 +58,8 @@ const router = createBrowserRouter(
         <Route path="users/:id" element={<UserDetail />} />
         <Route path="plugins" element={<Plugins />} />
         <Route path="plugins/:slug" element={<PluginDetail />} />
+        <Route path="files" element={<FileManager />} />
+        <Route path="files/preview" element={<MarkdownPreview />} />
         <Route path="logs" element={<Logs />} />
         <Route path="tickets" element={<Tickets />} />
         <Route path="tickets/analytics" element={<TicketAnalyticsPage />} />

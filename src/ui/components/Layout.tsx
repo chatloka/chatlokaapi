@@ -17,6 +17,7 @@ import {
   IconUsers,
   IconBrandTelegram,
   IconWebhook,
+  IconFolder,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -52,6 +53,7 @@ const navItems = [
       pathname === "/manage/users" || pathname.startsWith("/manage/users/"),
   },
   { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
+  { to: "/manage/files", icon: IconFolder, label: "File Manager" },
   { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
   {
     to: "/manage/tickets",

@@ -7,6 +7,7 @@ import { NotificationService } from "../services/notification"
 import { EnvatoService } from "../services/envato"
 import { ResendService } from "../services/resend"
 import { AppUpdateService } from "../services/appUpdate"
+import { FileManagerService } from "../services/fileManager"
 
 interface McpEnv {
   DB: D1Database
@@ -17,10 +18,34 @@ interface McpEnv {
   RESEND_API_KEY?: string
   TICKET_FROM_EMAIL?: string
   TICKET_FROM_NAME?: string
+  PLUGINS_BUCKET?: R2Bucket
 }
 
 function text(content: string) {
   return { content: [{ type: "text" as const, text: content }] }
+}
+
+// Maximum inbound request body for the Workers plan (~100 MB) minus a safety
+// margin. Files above this cannot pass through the worker and must go straight
+// to R2 via rclone/AWS CLI (S3 multipart, resumable, up to 5 TiB).
+const MAX_SIGNED_UPLOAD_BYTES = 95 * 1024 * 1024
+
+const R2_BUCKET_NAME = "chatlokaapi"
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i
+const SAFE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i
+const SAFE_VERSION_RE = /^[0-9][0-9a-zA-Z.\-_]{0,63}$/
+const APP_VERSION_RE = /^\d+\.\d+\.\d+/
+
+function isSafeSlug(slug: string): boolean {
+  return SAFE_SLUG_RE.test(slug)
+}
+
+function isSafeVersion(version: string): boolean {
+  return SAFE_VERSION_RE.test(version) && !version.includes("..") && !version.includes("//")
+}
+
+function isValidSha256(value: string): boolean {
+  return SHA256_HEX_RE.test(value)
 }
 
 export function createMcpServer(env: McpEnv) {
@@ -375,7 +400,154 @@ export function createMcpServer(env: McpEnv) {
     }
   )
 
-  // ─── Logs & Monitoring Tools ─────────────────────────────────────
+  // ─── Release Upload / Publish Tools ──────────────────────────────
+  //
+  // Releases are TWO steps on purpose:
+  //   1. upload the .zip to R2 (generate_*_upload_link), streaming directly
+  //   2. register the version in the database (publish_*)
+  // The publish step is always manual and requires the SHA-256 of the zip.
+
+  server.registerTool(
+    "generate_plugin_upload_link",
+    {
+      description: "Step 1 of releasing a new plugin version from your machine/VPS: get a one-time signed URL to upload the .zip. Files up to 95 MB upload through the worker with curl -T; larger files get rclone/AWS CLI instructions that go straight to R2 (S3 multipart, resumable). This tool does NOT register the version — call publish_plugin_version after the upload finishes.",
+      inputSchema: z.object({
+        slug: z.string().describe("Plugin slug (letters/digits/_/-)"),
+        version: z.string().describe("New version to release (e.g. 1.2.0)"),
+        file_size: z.number().optional().describe("Zip file size in bytes. If known and > 95 MB you get rclone instructions instead of a signed URL so it never hits the worker's request limit"),
+      }),
+    },
+    async ({ slug, version, file_size }) => {
+      if (!env.DOWNLOAD_TOKEN_SECRET) return text("Error: DOWNLOAD_TOKEN_SECRET not configured")
+      if (!env.PLUGINS_BUCKET) return text("Error: PLUGINS_BUCKET not configured")
+      if (!isSafeSlug(slug)) return text(`Error: '${slug}' is not a valid plugin slug (use letters, digits, _ or -)`)
+      if (!isSafeVersion(version)) return text(`Error: '${version}' is not a safe version string (letters, digits, dots, dashes, underscores only)`)
+
+      const existing = await env.DB.prepare(
+        "SELECT id FROM plugin_versions WHERE slug = ? AND version = ?"
+      ).bind(slug, version).first()
+      if (existing) return text(`Error: Plugin '${slug}' v${version} already exists. Pick a new version.`)
+
+      const filename = `${slug}-${version}.zip`
+      const zipPath = `plugins/${slug}/${version}/${filename}`
+      const baseUrl = env.API_BASE_URL || "https://api.chatloka.net"
+
+      if (file_size !== undefined && file_size > MAX_SIGNED_UPLOAD_BYTES) {
+        return text(JSON.stringify({
+          status: "use_rclone",
+          release_type: "plugin",
+          message: `File (${file_size} bytes) exceeds the 95 MB worker upload limit. Upload it directly to R2 with rclone or the AWS CLI (S3 multipart) instead of using the signed URL.`,
+          target_bucket: R2_BUCKET_NAME,
+          target_key: zipPath,
+          filename,
+          max_size_bytes: MAX_SIGNED_UPLOAD_BYTES,
+          instructions: [
+            `1. Compute the SHA-256 of the zip: sha256sum ${filename}`,
+            `2. Upload straight to R2 (multipart + resumable): rclone copyto ./${filename} :s3,provider=Cloudflare:${R2_BUCKET_NAME}/${zipPath} --s3-endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `   Or with the AWS CLI: aws s3 cp ./${filename} s3://${R2_BUCKET_NAME}/${zipPath} --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `3. Verify it landed: rclone lsl :s3,provider=Cloudflare:${R2_BUCKET_NAME}/plugins/${slug}/${version}/ --s3-endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `4. Keep the SHA-256 hex string from step 1 — you MUST pass it to publish_plugin_version.`,
+          ],
+          next_step: `Call publish_plugin_version({ slug: "${slug}", version: "${version}", checksum: "<sha256 from step 1>" }) — the checksum is REQUIRED.`,
+        }, null, 2))
+      }
+
+      const jti = crypto.randomUUID()
+      const exp = Math.floor(Date.now() / 1000) + 900
+      const token = await signHs256(
+        {
+          sub: "admin-mcp",
+          kind: "upload",
+          target: "plugin",
+          slug,
+          version,
+          filename,
+          zip_path: zipPath,
+          jti,
+          iss: "api.chatloka.net",
+          exp,
+        },
+        env.DOWNLOAD_TOKEN_SECRET,
+      )
+
+      const upload_url = `${baseUrl}/api/uploads/${token}`
+
+      return text(JSON.stringify({
+        status: "ready",
+        release_type: "plugin",
+        target: { slug, version, filename, zip_path: zipPath },
+        upload_url,
+        method: "PUT",
+        token,
+        max_size_bytes: MAX_SIGNED_UPLOAD_BYTES,
+        expires_at: new Date(exp * 1000).toISOString(),
+        instructions: [
+          `1. Compute the SHA-256 of the zip (needed below and later for publish): sha256sum ${filename}`,
+          `2. Stream the file to the signed URL. Use a real sha256 hex below:`,
+          `   curl -T ${filename} -H "X-Checksum-SHA256: <sha256>" '${upload_url}'`,
+          `3. Expect a 2xx JSON response { success: true, file_size, checksum }. The file is now in R2 but NOT yet registered in the database.`,
+          `4. If you already used the URL (or it expired after 15 min), re-run this tool for a fresh token.`,
+        ],
+        next_step: `Call publish_plugin_version({ slug: "${slug}", version: "${version}", checksum: "<sha256 from step 1>" }) — the checksum is REQUIRED.`,
+      }, null, 2))
+    }
+  )
+
+  server.registerTool(
+    "publish_plugin_version",
+    {
+      description: "Step 2 of releasing a plugin version. REGISTERS a version whose .zip is already in R2 (uploaded via generate_plugin_upload_link or rclone). It does NOT upload anything; it verifies the object exists in storage, then inserts the version row and marks it latest. Requires the SHA-256 checksum, which must be computed on the machine that has the zip (sha256sum).",
+      inputSchema: z.object({
+        slug: z.string().describe("Plugin slug"),
+        version: z.string().describe("Version that was uploaded (e.g. 1.2.0)"),
+        checksum: z.string().describe("REQUIRED. SHA-256 hex digest of the zip (run: sha256sum <zipfile>). Used for tamper-detection integrity checks"),
+        changelog: z.string().optional().describe("Release notes / changelog"),
+        requires_chaton: z.string().optional().describe("Minimum Chatloka app version required for this plugin (e.g. 1.4.0)"),
+      }),
+    },
+    async ({ slug, version, checksum, changelog, requires_chaton }) => {
+      const bucket = env.PLUGINS_BUCKET
+      if (!bucket) return text("Error: PLUGINS_BUCKET not configured")
+      if (!isSafeSlug(slug)) return text(`Error: '${slug}' is not a valid plugin slug`)
+      if (!isValidSha256(checksum)) return text(`Error: '${checksum ?? ""}' is not a valid SHA-256 hex digest (64 chars, 0-9a-f). Compute it with: sha256sum ${slug}-${version}.zip`)
+
+      const existing = await env.DB.prepare(
+        "SELECT id FROM plugin_versions WHERE slug = ? AND version = ?"
+      ).bind(slug, version).first()
+      if (existing) return text(`Error: Plugin '${slug}' v${version} is already registered. Use a different version or delete/replace it first.`)
+
+      const filename = `${slug}-${version}.zip`
+      const zipPath = `plugins/${slug}/${version}/${filename}`
+
+      const object = await bucket.head(zipPath)
+      if (!object) {
+        return text(JSON.stringify({
+          success: false,
+          error: `No file found at '${zipPath}'.`,
+          fix: `Step 2 cannot run before Step 1 (the file must exist in R2). Run generate_plugin_upload_link (or upload via rclone/AWS CLI for files > 95 MB), upload ${filename}, then re-run this tool.`,
+        }, null, 2))
+      }
+
+      await env.DB.prepare("UPDATE plugin_versions SET is_latest = 0 WHERE slug = ?").bind(slug).run()
+      await env.DB.prepare(
+        `INSERT INTO plugin_versions (slug, version, changelog, zip_path, checksum, requires_chaton, is_latest, released_at)
+         VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))`
+      ).bind(slug, version, changelog || null, zipPath, checksum, requires_chaton || null).run()
+
+      return text(JSON.stringify({
+        success: true,
+        release_type: "plugin",
+        slug,
+        version,
+        zip_path: zipPath,
+        checksum,
+        file_size: object.size,
+        is_latest: true,
+        release_url: `${env.API_BASE_URL || "https://api.chatloka.net"}/api/plugins/token`,
+        note: "Version is now live and will be suggested to clients via /api/plugins/check-updates.",
+      }, null, 2))
+    }
+  )
 
   server.registerTool(
     "get_api_logs",
@@ -1247,6 +1419,152 @@ export function createMcpServer(env: McpEnv) {
   )
 
   server.registerTool(
+    "generate_app_upload_link",
+    {
+      description: "Step 1 of releasing a new Chatloka app version from your machine/VPS: get a one-time signed URL to upload the zip. Files up to 95 MB upload through the worker with curl -T; larger files get rclone/AWS CLI instructions that go straight to R2 (S3 multipart, resumable). This tool does NOT register the version — call publish_app_version after the upload finishes.",
+      inputSchema: z.object({
+        version: z.string().optional().describe("New release version (semver, e.g. 1.5.0)"),
+        file_size: z.number().optional().describe("Zip file size in bytes. If known and > 95 MB you get rclone instructions instead of a signed URL so it never hits the worker's request limit"),
+      }),
+    },
+    async ({ version, file_size }) => {
+      if (!env.DOWNLOAD_TOKEN_SECRET) return text("Error: DOWNLOAD_TOKEN_SECRET not configured")
+      if (!env.PLUGINS_BUCKET) return text("Error: PLUGINS_BUCKET not configured")
+      if (!version) return text("Error: 'version' is required")
+      if (!APP_VERSION_RE.test(version)) return text(`Error: '${version}' is not a semver release (e.g. 1.4.0).`)
+
+      const existing = await env.DB.prepare(
+        "SELECT id FROM app_versions WHERE version = ?"
+      ).bind(version).first()
+      if (existing) return text(`Error: App version ${version} already exists. Pick a new version.`)
+
+      const filename = `chatloka-${version}.zip`
+      const zipPath = `app-releases/${version}/${filename}`
+      const baseUrl = env.API_BASE_URL || "https://api.chatloka.net"
+
+      if (file_size !== undefined && file_size > MAX_SIGNED_UPLOAD_BYTES) {
+        return text(JSON.stringify({
+          status: "use_rclone",
+          release_type: "app",
+          message: `File (${file_size} bytes) exceeds the 95 MB worker upload limit. Upload it directly to R2 with rclone or the AWS CLI (S3 multipart) instead of using the signed URL.`,
+          target_bucket: R2_BUCKET_NAME,
+          target_key: `${zipPath}`,
+          filename,
+          max_size_bytes: MAX_SIGNED_UPLOAD_BYTES,
+          instructions: [
+            `1. Compute the SHA-256 of the zip: sha256sum ${filename}`,
+            `2. Upload straight to R2 (multipart + resumable): rclone copyto ./${filename} :s3,provider=Cloudflare:${R2_BUCKET_NAME}/${zipPath} --s3-endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `   Or with the AWS CLI: aws s3 cp ./${filename} s3://${R2_BUCKET_NAME}/${zipPath} --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `3. Verify it landed: rclone lsl :s3,provider=Cloudflare:${R2_BUCKET_NAME}/app-releases/${version}/ --s3-endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `4. Keep the SHA-256 hex string from step 1 — you MUST pass it to publish_app_version.`,
+          ],
+          next_step: `Call publish_app_version({ version: "${version}", checksum: "<sha256 from step 1>" }) — the checksum is REQUIRED.`,
+        }, null, 2))
+      }
+
+      const jti = crypto.randomUUID()
+      const exp = Math.floor(Date.now() / 1000) + 900
+      const token = await signHs256(
+        {
+          sub: "admin-mcp",
+          kind: "upload",
+          target: "app",
+          version,
+          filename,
+          zip_path: zipPath,
+          jti,
+          iss: "api.chatloka.net",
+          exp,
+        },
+        env.DOWNLOAD_TOKEN_SECRET,
+      )
+
+      const upload_url = `${baseUrl}/api/uploads/${token}`
+
+      return text(JSON.stringify({
+        status: "ready",
+        release_type: "app",
+        target: { version, filename, zip_path: zipPath },
+        upload_url,
+        method: "PUT",
+        token,
+        max_size_bytes: MAX_SIGNED_UPLOAD_BYTES,
+        expires_at: new Date(exp * 1000).toISOString(),
+        instructions: [
+          `1. Compute the SHA-256 of the zip (needed below and later for publish): sha256sum ${filename}`,
+          `2. Stream the file to the signed URL. Use a real sha256 hex below:`,
+          `   curl -T ${filename} -H "X-Checksum-SHA256: <sha256>" '${upload_url}'`,
+          `3. Expect a 2xx JSON response { success: true, file_size, checksum }. The file is now in R2 but NOT yet registered in the database.`,
+          `4. If you already used the URL (or it expired after 15 min), re-run this tool for a fresh token.`,
+        ],
+        next_step: `Call publish_app_version({ version: "${version}", checksum: "<sha256 from step 1>" }) — the checksum is REQUIRED.`,
+      }, null, 2))
+    }
+  )
+
+  server.registerTool(
+    "publish_app_version",
+    {
+      description: "Step 2 of releasing an app version. REGISTERS a release whose zip is already in R2 (uploaded via generate_app_upload_link or rclone). It does NOT upload anything; it verifies the object exists, then inserts the version row and marks it latest. Requires the SHA-256 checksum computed on the machine that has the zip (sha256sum).",
+      inputSchema: z.object({
+        version: z.string().describe("Release version that was uploaded (semver, e.g. 1.4.0)"),
+        checksum: z.string().describe("REQUIRED. SHA-256 hex digest of the zip (run: sha256sum chatloka-<version>.zip). Used for integrity/tamper detection"),
+        changelog: z.string().optional().describe("Release changelog"),
+        file_size: z.number().optional().describe("Zip size in bytes (shown to clients in the update payload)"),
+        min_php_version: z.string().optional().describe("Minimum PHP version required, defaults to 8.2"),
+        min_chatloka_version: z.string().optional().describe("Minimum Chatloka version this release requires migrating to"),
+        breaking_changes: z.string().optional().describe("JSON-encoded array of breaking-change descriptions, e.g. [\"Drops PHP 8.0 support\"]"),
+      }),
+    },
+    async ({ version, checksum, changelog, file_size, min_php_version, min_chatloka_version, breaking_changes }) => {
+      const bucket = env.PLUGINS_BUCKET
+      if (!bucket) return text("Error: PLUGINS_BUCKET not configured")
+      if (!APP_VERSION_RE.test(version)) return text(`Error: '${version}' is not a semver release version (e.g. 1.4.0).`)
+      if (!isValidSha256(checksum)) return text(`Error: '${checksum ?? ""}' is not a valid SHA-256 hex digest (64 chars, 0-9a-f). Compute it with: sha256sum chatloka-${version}.zip`)
+
+      const service = new AppUpdateService(env.DB)
+      const existing = await service.getVersionByVersion(version)
+      if (existing) return text(`Error: App version ${version} is already registered. Use a different version.`)
+
+      const filename = `chatloka-${version}.zip`
+      const zipPath = `app-releases/${version}/${filename}`
+
+      const object = await bucket.head(zipPath)
+      if (!object) {
+        return text(JSON.stringify({
+          success: false,
+          error: `No file found at '${zipPath}'.`,
+          fix: `Run generate_app_upload_link (or upload via rclone/AWS CLI for files > 95 MB), upload ${filename}, then re-run this tool.`,
+        }, null, 2))
+      }
+
+      await service.createVersion({
+        version,
+        changelog: changelog || undefined,
+        zip_path: zipPath,
+        checksum,
+        file_size: file_size ?? object.size,
+        min_php_version: min_php_version || undefined,
+        min_chatloka_version: min_chatloka_version || undefined,
+        breaking_changes: breaking_changes || undefined,
+        created_by: "admin-mcp",
+      })
+
+      return text(JSON.stringify({
+        success: true,
+        release_type: "app",
+        version,
+        zip_path: zipPath,
+        checksum,
+        file_size: file_size ?? object.size,
+        min_php_version: min_php_version || "8.2",
+        is_latest: true,
+        note: "Version is now the latest. Clients running /api/app/check-update will be told to upgrade.",
+      }, null, 2))
+    }
+  )
+
+  server.registerTool(
     "get_app_update_logs",
     {
       description: "Search client-side app-update logs: which licenses/domains upgraded/downgraded between which versions, success or failure, and error messages.",
@@ -1305,6 +1623,231 @@ export function createMcpServer(env: McpEnv) {
       }
       const count = await notificationService.markAllRead()
       return text(JSON.stringify({ success: true, marked_count: count }, null, 2))
+    }
+  )
+
+  // ─── File Manager Tools (R2 internal files) ─────────────────────
+
+  const fileManager = () => {
+    if (!env.PLUGINS_BUCKET) throw new Error("PLUGINS_BUCKET not configured")
+    return new FileManagerService(env.PLUGINS_BUCKET)
+  }
+
+  const SAFE_KEY_RE = /^[A-Za-z0-9._\-/ ]+$/
+
+  function isSafeObjectKey(key: string): boolean {
+    if (!key || key.length > 500) return false
+    if (key.startsWith("/") || key.includes("..")) return false
+    return SAFE_KEY_RE.test(key)
+  }
+
+  server.registerTool(
+    "get_files",
+    {
+      description: "List objects in the R2 File Manager. With folder='files/' you get the internal file area; browse sub-folders by passing their path (e.g. 'files/specs/'). Returns sub-folders plus files with size, upload date, content type and SHA-256 checksum. Set search to find files by name inside the given folder.",
+      inputSchema: z.object({
+        folder: z.string().optional().describe("Folder path to list (e.g. '' for root, 'files/' for internal files, 'files/specs/'). Defaults to ''"),
+        search: z.string().optional().describe("Search term — matches file names inside the folder (recursive)"),
+        cursor: z.string().optional().describe("Pagination cursor from a previous response"),
+        limit: z.number().optional().describe("Max entries, defaults to 200, max 1000"),
+      }),
+    },
+    async ({ folder, search, cursor, limit }) => {
+      try {
+        const fm = fileManager()
+        const result = await fm.list(folder || "", { search, cursor, limit: limit || 200 })
+        return text(JSON.stringify({
+          folder: folder || "",
+          folders: result.folders.map((f) => f.key),
+          files: result.files,
+          has_more: result.truncated,
+          next_cursor: result.cursor,
+        }, null, 2))
+      } catch (e: any) {
+        return text(JSON.stringify({ success: false, error: e?.message || "Failed to list files" }, null, 2))
+      }
+    }
+  )
+
+  server.registerTool(
+    "create_folder",
+    {
+      description: "Create a folder in the R2 File Manager (zero-byte placeholder object, standard R2 convention). Pass the full path, e.g. 'files/specs/2025' or 'files/custom-solutions/buyer-x'. Nested folders are created implicitly once a file lands inside them, but this keeps the folder visible in listings.",
+      inputSchema: z.object({
+        path: z.string().describe("Folder path to create (e.g. files/specs/2025)"),
+      }),
+    },
+    async ({ path }) => {
+      const raw = (path || "").trim()
+      if (!isSafeObjectKey(raw)) return text(`Error: '${raw}' is not a valid folder path`)
+      try {
+        const key = await fileManager().createFolder(raw)
+        return text(JSON.stringify({ success: true, key, message: `Folder '${key}' created` }, null, 2))
+      } catch (e: any) {
+        return text(JSON.stringify({ success: false, error: e?.message || "Failed to create folder" }, null, 2))
+      }
+    }
+  )
+
+  server.registerTool(
+    "generate_file_upload_link",
+    {
+      description: "Upload a file to the R2 File Manager from your machine/VPS. Returns a one-time signed PUT URL (15 min, single-use) plus a curl command. Files up to 95 MB stream through the worker; larger files get rclone/AWS CLI instructions that go straight to R2 (S3 multipart, resumable). Unlike release uploads there is NO publish step — after the upload the file is immediately live and visible in get_files / the admin File Manager.",
+      inputSchema: z.object({
+        folder: z.string().optional().describe("Destination folder, defaults to 'files/' (internal file area). Use e.g. 'files/specs/' or 'files/custom-solutions/buyer-x/'"),
+        filename: z.string().describe("File name, e.g. spec-v2.pdf or chatloka-source.tar.gz (no slashes)"),
+        file_size: z.number().optional().describe("File size in bytes. If known and > 95 MB you get rclone instructions instead of a signed URL"),
+        content_type: z.string().optional().describe("Content type to store (e.g. application/pdf). Auto-detected from common extensions when omitted"),
+      }),
+    },
+    async ({ folder, filename, file_size, content_type }) => {
+      if (!env.DOWNLOAD_TOKEN_SECRET) return text("Error: DOWNLOAD_TOKEN_SECRET not configured")
+      const name = (filename || "").trim()
+      if (!name || name.includes("/") || name.includes("\\") || name.length > 200) {
+        return text(`Error: '${filename ?? ""}' is not a valid file name (no slashes)`)
+      }
+      const folderPath = (folder || "files/").trim().replace(/^\/+|\/+$/g, "") + "/"
+      const key = `${folderPath}${name}`
+      if (!isSafeObjectKey(key)) return text(`Error: target key '${key}' is not valid`)
+
+      const baseUrl = env.API_BASE_URL || "https://api.chatloka.net"
+      const maxSize = MAX_SIGNED_UPLOAD_BYTES
+
+      if (file_size !== undefined && file_size > maxSize) {
+        return text(JSON.stringify({
+          status: "use_rclone",
+          message: `File (${file_size} bytes) exceeds the 95 MB worker upload limit. Upload it directly to R2 with rclone or the AWS CLI (S3 multipart) instead of using the signed URL.`,
+          target_bucket: R2_BUCKET_NAME,
+          target_key: key,
+          filename: name,
+          max_size_bytes: maxSize,
+          instructions: [
+            `1. (Optional) Compute the SHA-256 if you want integrity verification: sha256sum ${name}`,
+            `2. Upload straight to R2 (multipart + resumable): rclone copyto ./${name} :s3,provider=Cloudflare:${R2_BUCKET_NAME}/${key} --s3-endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `   Or with the AWS CLI: aws s3 cp ./${name} s3://${R2_BUCKET_NAME}/${key} --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+            `3. Verify it landed: get_files({ folder: "${folderPath}" }) or rclone lsl :s3,provider=Cloudflare:${R2_BUCKET_NAME}/${folderPath} --s3-endpoint https://<ACCOUNT_ID>.r2.cloudflarestorage.com`,
+          ],
+          next_step: "No publish step needed — the file is live immediately. Call get_files to confirm.",
+        }, null, 2))
+      }
+
+      const ext = name.split(".").pop()?.toLowerCase() || ""
+      const autoType: Record<string, string> = {
+        pdf: "application/pdf", zip: "application/zip", json: "application/json",
+        md: "text/markdown", txt: "text/plain", csv: "text/csv", html: "text/html",
+        css: "text/css", js: "application/javascript", php: "text/x-php", xml: "application/xml",
+      }
+
+      const jti = crypto.randomUUID()
+      const exp = Math.floor(Date.now() / 1000) + 900
+      const token = await signHs256(
+        {
+          sub: "admin-mcp",
+          kind: "upload",
+          target: "file",
+          zip_path: key,
+          filename: name,
+          content_type: content_type || autoType[ext] || "application/octet-stream",
+          jti,
+          iss: "api.chatloka.net",
+          exp,
+        },
+        env.DOWNLOAD_TOKEN_SECRET,
+      )
+
+      const upload_url = `${baseUrl}/api/uploads/${token}`
+
+      return text(JSON.stringify({
+        status: "ready",
+        target: { key, filename: name },
+        upload_url,
+        method: "PUT",
+        token,
+        max_size_bytes: maxSize,
+        expires_at: new Date(exp * 1000).toISOString(),
+        instructions: [
+          `1. (Optional) Compute the SHA-256 of the file: sha256sum ${name}`,
+          `2. Stream the file to the signed URL (add -H "X-Checksum-SHA256: <sha256>" to have R2 validate integrity):`,
+          `   curl -T ${name} '${upload_url}'`,
+          `3. Expect a 2xx JSON response { success: true, file_size, checksum }. The file is now live in R2 — no publish step needed.`,
+          `4. If you already used the URL (or it expired after 15 min), re-run this tool for a fresh token.`,
+        ],
+        next_step: `Call get_files({ folder: "${folderPath}" }) to confirm the file is listed.`,
+      }, null, 2))
+    }
+  )
+
+  server.registerTool(
+    "generate_file_download_link",
+    {
+      description: "Generate a one-time signed download URL for a file in the R2 File Manager. The URL works with plain curl (no headers) and expires after 1 hour or first use. The file is streamed with its stored content type and checksum headers.",
+      inputSchema: z.object({
+        key: z.string().describe("Full object key of the file, e.g. files/specs/spec-v2.pdf (must be a file, not a folder)"),
+      }),
+    },
+    async ({ key }) => {
+      if (!env.DOWNLOAD_TOKEN_SECRET) return text("Error: DOWNLOAD_TOKEN_SECRET not configured")
+      if (!isSafeObjectKey(key || "")) return text(`Error: '${key ?? ""}' is not a valid object key`)
+      if ((key || "").endsWith("/")) return text(`Error: '${key}' is a folder — pick a file inside it`)
+      try {
+        const fm = fileManager()
+        const obj = await fm.head(key)
+        if (!obj) return text(`Error: no file found at '${key}'`)
+      } catch (e: any) {
+        return text(JSON.stringify({ success: false, error: e?.message || "Failed to check file" }, null, 2))
+      }
+
+      const jti = crypto.randomUUID()
+      const exp = Math.floor(Date.now() / 1000) + 3600
+      const token = await signHs256(
+        {
+          sub: "admin-mcp",
+          kind: "file-download",
+          key,
+          jti,
+          iss: "api.chatloka.net",
+          exp,
+        },
+        env.DOWNLOAD_TOKEN_SECRET,
+      )
+
+      const baseUrl = env.API_BASE_URL || "https://api.chatloka.net"
+      const download_url = `${baseUrl}/api/files/download/${token}`
+
+      return text(JSON.stringify({
+        download_url,
+        token,
+        key,
+        expires_at: new Date(exp * 1000).toISOString(),
+        single_use: true,
+        instructions: `Download with curl: curl -OJ "${download_url}"`,
+      }, null, 2))
+    }
+  )
+
+  server.registerTool(
+    "delete_file",
+    {
+      description: "Delete a file or an entire folder from the R2 File Manager (and the rest of the bucket). Pass an exact file key (e.g. 'files/specs/old.pdf') or a folder path ending with '/' (e.g. 'files/custom-solutions/buyer-x/') to delete it recursively. Returns how many objects were removed. Irreversible.",
+      inputSchema: z.object({
+        key: z.string().describe("Object key to delete. Ends with '/' to delete a whole folder recursively"),
+      }),
+    },
+    async ({ key }) => {
+      const raw = (key || "").trim()
+      if (!isSafeObjectKey(raw)) return text(`Error: '${raw}' is not a valid object key`)
+      try {
+        const result = await fileManager().deletePath(raw)
+        return text(JSON.stringify({
+          success: true,
+          deleted_objects: result.deleted,
+          type: result.type,
+          target: raw,
+          note: result.deleted === 0 ? "Nothing was found at that key." : undefined,
+        }, null, 2))
+      } catch (e: any) {
+        return text(JSON.stringify({ success: false, error: e?.message || "Failed to delete" }, null, 2))
+      }
     }
   )
 

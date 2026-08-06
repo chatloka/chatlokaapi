@@ -32,13 +32,15 @@ import {
   IconMessage,
   IconSettings,
   IconFolder,
+  IconFolderPlus,
   IconChartPie,
   IconStar,
   IconBolt,
   IconCircleCheck,
+  IconUpload,
 } from "@tabler/icons-react"
 
-export type ToolCategory = "License" | "Plugins" | "Tickets" | "Contacts" | "Releases" | "Notifications" | "Monitoring"
+export type ToolCategory = "License" | "Plugins" | "Tickets" | "Contacts" | "Releases" | "Notifications" | "Monitoring" | "Files"
 
 export interface McpParam {
   name: string
@@ -72,6 +74,7 @@ export const CATEGORY_ICONS: Record<ToolCategory, ReactNode> = {
   Releases: <IconRocket className="h-4 w-4" />,
   Notifications: <IconBell className="h-4 w-4" />,
   Monitoring: <IconActivity className="h-4 w-4" />,
+  Files: <IconFolder className="h-4 w-4" />,
 }
 
 export const MCP_TOOLS: McpTool[] = [
@@ -229,6 +232,36 @@ export const MCP_TOOLS: McpTool[] = [
       p("purchase_code", "string", false, "Purchase code recorded on the token, defaults to admin"),
     ],
     example: "generate_plugin_download_link({ slug: \"wa-gateway\" })",
+  },
+  {
+    name: "generate_plugin_upload_link",
+    category: "Plugins",
+    icon: <IconUpload className="h-4 w-4" />,
+    short: "Step 1 — get a signed upload URL",
+    description:
+      "STEP 1 of releasing a new plugin version from your machine/VPS. Returns a one-time signed PUT URL (15 min, single-use) plus a curl command to stream the .zip through the worker to R2. Files up to 95 MB go via curl; larger files get rclone/AWS CLI instructions that go straight to R2 (S3 multipart, resumable). Does NOT register the version — finish with publish_plugin_version.",
+    params: [
+      p("slug", "string", true, "Plugin slug (letters, digits, _ or -)"),
+      p("version", "string", true, "New version to release (e.g. 1.2.0)"),
+      p("file_size", "number", false, "Zip size in bytes. If > 95 MB you get rclone instructions instead of a signed URL"),
+    ],
+    example: "generate_plugin_upload_link({ slug: \"saas\", version: \"1.2.0\", file_size: 82453412 })",
+  },
+  {
+    name: "publish_plugin_version",
+    category: "Plugins",
+    icon: <IconCircleCheck className="h-4 w-4" />,
+    short: "STEP 2 — register uploaded version",
+    description:
+      "STEP 2 of releasing a plugin version (always runs after the upload). REGISTERS a .zip that is already in R2 — it does not upload anything. Verifies the object exists via bucket.head, then inserts the version row and marks it latest. The checksum (REQUIRED) is the SHA-256 hex from `sha256sum <zipfile>`; it powers integrity/tamper detection.",
+    params: [
+      p("slug", "string", true, "Plugin slug"),
+      p("version", "string", true, "Version that was uploaded"),
+      p("checksum", "string", true, "REQUIRED. SHA-256 hex of the zip (run: sha256sum <zipfile>)"),
+      p("changelog", "string", false, "Release notes / changelog"),
+      p("requires_chaton", "string", false, "Minimum Chatloka app version needed (e.g. 1.4.0)"),
+    ],
+    example: "publish_plugin_version({ slug: \"saas\", version: \"1.2.0\", checksum: \"e4d90ab2...\", changelog: \"Fixes payment webhook\" })",
   },
 
   // ─── Tickets ───────────────────────────────────────────────
@@ -487,6 +520,37 @@ export const MCP_TOOLS: McpTool[] = [
     example: "generate_release_download_link({ version: \"1.2.0\" })",
   },
   {
+    name: "generate_app_upload_link",
+    category: "Releases",
+    icon: <IconUpload className="h-4 w-4" />,
+    short: "STEP 1 — get a signed upload URL",
+    description:
+      "STEP 1 of releasing a new Chatloka core app version from your machine/VPS. Returns a one-time signed PUT URL (15 min, single-use) plus a curl command to stream the .zip through the worker to R2. Files up to 95 MB go via curl; larger files get rclone/AWS CLI instructions that go straight to R2 (S3 multipart, resumable). Does NOT register the version — finish with publish_app_version.",
+    params: [
+      p("version", "string", false, "New release version (semver, e.g. 1.5.0)"),
+      p("file_size", "number", false, "Zip size in bytes. If > 95 MB you get rclone instructions instead of a signed URL"),
+    ],
+    example: "generate_app_upload_link({ version: \"1.5.0\", file_size: 130000000 })",
+  },
+  {
+    name: "publish_app_version",
+    category: "Releases",
+    icon: <IconCircleCheck className="h-4 w-4" />,
+    short: "STEP 2 — register uploaded release",
+    description:
+      "STEP 2 of releasing an app version (always runs after the upload). REGISTERS a .zip that is already in R2 — it does not upload anything. Verifies the object exists via bucket.head, then inserts the version row and marks it latest. The checksum (REQUIRED) is the SHA-256 hex from `sha256sum chatloka-<version>.zip`; it powers integrity/tamper detection.",
+    params: [
+      p("version", "string", true, "Release version that was uploaded (semver)"),
+      p("checksum", "string", true, "REQUIRED. SHA-256 hex of the zip (run: sha256sum chatloka-<version>.zip)"),
+      p("changelog", "string", false, "Release changelog"),
+      p("file_size", "number", false, "Zip size in bytes (shown to clients in the update payload)"),
+      p("min_php_version", "string", false, "Minimum PHP version, defaults to 8.2"),
+      p("min_chatloka_version", "string", false, "Minimum Chatloka version this release requires"),
+      p("breaking_changes", "string", false, "JSON array of breaking-change descriptions, e.g. [\"Drops PHP 8.0 support\"]"),
+    ],
+    example: "publish_app_version({ version: \"1.5.0\", checksum: \"a1b2c3d4...\", changelog: \"New dashboard\", min_php_version: \"8.2\" })",
+  },
+  {
     name: "get_app_update_logs",
     category: "Releases",
     icon: <IconHistory className="h-4 w-4" />,
@@ -524,6 +588,68 @@ export const MCP_TOOLS: McpTool[] = [
       "Marks a single notification read (by id) or clears the entire notification feed.",
     params: [p("notification_id", "number", false, "Mark a single notification read. Omit to mark all read")],
     example: "mark_notifications_read()",
+  },
+
+  // ─── Files (R2 File Manager) ────────────────────────────────
+  {
+    name: "get_files",
+    category: "Files",
+    icon: <IconFolder className="h-4 w-4" />,
+    short: "List files & folders in R2",
+    description:
+      "Lists objects in the R2 File Manager. Pass a folder path (e.g. 'files/' for the internal file area, 'plugins/' or 'app-releases/' for anything else in the bucket) to get that folder's sub-folders and files with size, upload date, content type and SHA-256 checksum. Set search to find files by name inside the folder (recursive).",
+    params: [
+      p("folder", "string", false, "Folder path to list ('' = root, 'files/', 'files/specs/'). Defaults to ''"),
+      p("search", "string", false, "Search by file name inside the folder (recursive)"),
+      p("cursor", "string", false, "Pagination cursor from a previous response"),
+      p("limit", "number", false, "Max entries, defaults to 200, max 1000"),
+    ],
+    example: "get_files({ folder: \"files/specs/\" })",
+  },
+  {
+    name: "create_folder",
+    category: "Files",
+    icon: <IconFolderPlus className="h-4 w-4" />,
+    short: "Create a folder in R2",
+    description:
+      "Creates a folder in the R2 File Manager (a zero-byte placeholder object, the standard R2 convention). Pass the full path, e.g. 'files/specs/2025' or 'files/custom-solutions/buyer-x'. Nested folders appear automatically once a file lands inside them, but this makes the folder visible in listings even before that.",
+    params: [p("path", "string", true, "Folder path to create (e.g. files/specs/2025)")],
+    example: "create_folder({ path: \"files/specs/2025\" })",
+  },
+  {
+    name: "generate_file_upload_link",
+    category: "Files",
+    icon: <IconUpload className="h-4 w-4" />,
+    short: "Get a signed upload link",
+    description:
+      "Uploads a file to the R2 File Manager from your machine/VPS. Returns a one-time signed PUT URL (15 min, single-use) with a curl command. Files up to 95 MB stream through the worker; larger files get rclone/AWS CLI instructions that go straight to R2 (S3 multipart, resumable). Unlike release uploads there is NO publish step — once the upload finishes the file is immediately live.",
+    params: [
+      p("folder", "string", false, "Destination folder, defaults to 'files/' (e.g. files/specs/)"),
+      p("filename", "string", true, "File name without slashes (e.g. spec-v2.pdf)"),
+      p("file_size", "number", false, "File size in bytes. If > 95 MB you get rclone instructions instead of a signed URL"),
+      p("content_type", "string", false, "Content type to store (e.g. application/pdf)"),
+    ],
+    example: "generate_file_upload_link({ folder: \"files/specs/\", filename: \"spec-v2.pdf\" })",
+  },
+  {
+    name: "generate_file_download_link",
+    category: "Files",
+    icon: <IconDownload className="h-4 w-4" />,
+    short: "Signed download URL for a file",
+    description:
+      "Generates a one-time signed download URL for a file in the R2 File Manager. Works with plain curl (no headers), expires after 1 hour or first use. The file streams with its stored content type and checksum headers.",
+    params: [p("key", "string", true, "Full object key, e.g. files/specs/spec-v2.pdf")],
+    example: "generate_file_download_link({ key: \"files/specs/spec-v2.pdf\" })",
+  },
+  {
+    name: "delete_file",
+    category: "Files",
+    icon: <IconTrash className="h-4 w-4" />,
+    short: "Delete a file or folder recursively",
+    description:
+      "Deletes a file or an entire folder from the R2 File Manager (or anywhere in the bucket). Pass an exact key (e.g. 'files/specs/old.pdf') or a folder path ending with '/' to delete everything inside it recursively. Returns how many objects were removed. Irreversible.",
+    params: [p("key", "string", true, "Object key to delete. End with '/' to delete a whole folder recursively")],
+    example: "delete_file({ key: \"files/custom-solutions/buyer-x/\" })",
   },
 
   // ─── Monitoring ────────────────────────────────────────────
@@ -591,4 +717,5 @@ export const CATEGORY_COLORS: Record<ToolCategory, string> = {
   Releases: "bg-rose-500/15 text-rose-400 border-rose-500/20",
   Notifications: "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/20",
   Monitoring: "bg-cyan-500/15 text-cyan-400 border-cyan-500/20",
+  Files: "bg-orange-500/15 text-orange-400 border-orange-500/20",
 }

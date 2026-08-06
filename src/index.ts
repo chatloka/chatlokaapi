@@ -53,14 +53,17 @@ app.use('/api/*', async (c, next) => {
   let requestBodySize: number | null = null
 
   if (method === 'POST' || method === 'PUT') {
-    try {
-      const cloned = c.req.raw.clone()
-      const body = await cloned.json() as Record<string, unknown>
-      purchaseCode = (body.purchase_code as string) || (c.req.header('x-license-key') as string | undefined) || null
-      domain = (body.domain as string) || null
-      requestBodySize = JSON.stringify(body).length
-    } catch {
-      // Body might not be JSON, that's fine
+    // /api/uploads/* bodies are raw binary streams; never buffer them for logging.
+    if (!endpoint.startsWith('/api/uploads/')) {
+      try {
+        const cloned = c.req.raw.clone()
+        const body = await cloned.json() as Record<string, unknown>
+        purchaseCode = (body.purchase_code as string) || (c.req.header('x-license-key') as string | undefined) || null
+        domain = (body.domain as string) || null
+        requestBodySize = JSON.stringify(body).length
+      } catch {
+        // Body might not be JSON, that's fine
+      }
     }
   } else {
     purchaseCode = c.req.header('x-license-key') || null
@@ -141,8 +144,8 @@ function maskDomain(domain: string): string {
 
 app.use('/*', cors({
   origin: '*',
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-License-Key', 'X-Download-Token', 'X-ChatOn-Version'],
+  allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-License-Key', 'X-Download-Token', 'X-Checksum-SHA256', 'X-ChatOn-Version'],
 }))
 
 app.get('/', (c) => {
@@ -723,6 +726,182 @@ app.get('/downloads/attachments/:attachmentId', async (c) => {
       'Content-Disposition': `attachment; filename="${attachment.filename}"`,
       ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
     },
+  })
+})
+
+// ============================================
+// Release Upload (signed URL, streaming to R2)
+// ============================================
+
+// Maximum inbound request body for this plan (Workers Free/Pro = 100 MB).
+// Keep a safety margin so the edge 413 never triggers mid-upload.
+const MAX_SIGNED_UPLOAD_BYTES = 95 * 1024 * 1024
+
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i
+
+// PUT /api/uploads/:token
+// Streams a file (release .zip or a generic file-manager object) straight to
+// R2. The token is a signed single-use JWT produced by the MCP
+// generate_*_upload_link tools (target "plugin"/"app" for release zips,
+// "file" for the generic File Manager).
+app.put('/api/uploads/:token', async (c) => {
+  const token = c.req.param('token')
+  if (!token) return c.json({ error: 'token_missing', message: 'Upload token is required' }, 401)
+
+  let payload: Record<string, any>
+  try {
+    payload = await verifyHs256(token, c.env.DOWNLOAD_TOKEN_SECRET)
+  } catch (e: any) {
+    return c.json({ error: 'token_invalid', message: e?.message || 'Invalid or expired token' }, 401)
+  }
+
+  if (payload.kind !== 'upload') return c.json({ error: 'token_invalid', message: 'Token is not an upload token' }, 401)
+  if (!['api.chaton.pro', 'api.chatloka.net'].includes(payload.iss)) {
+    return c.json({ error: 'token_invalid', message: 'Invalid token issuer' }, 401)
+  }
+
+  const target = payload.target
+  const jti = payload.jti
+  const key = payload.zip_path
+  if (!jti) return c.json({ error: 'token_invalid', message: 'Missing token id' }, 401)
+  if (typeof key !== 'string' || !key) return c.json({ error: 'token_invalid', message: 'Missing upload target in token' }, 401)
+
+  // Single-use: an upload token may only ever PUT one file.
+  const isApp = target === 'app'
+  const usedTable = isApp ? 'app_used_tokens' : 'used_tokens'
+  const alreadyUsed = await c.env.DB.prepare(`SELECT jti FROM ${usedTable} WHERE jti = ? LIMIT 1`).bind(jti).first()
+  if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This upload token has already been used' }, 401)
+
+  const body = c.req.raw.body
+  if (!body) return c.json({ error: 'invalid_request', message: 'Request body (the file) is required' }, 400)
+
+  const contentLength = parseInt(c.req.header('Content-Length') || '0', 10)
+  if (contentLength > 0 && contentLength > MAX_SIGNED_UPLOAD_BYTES) {
+    return c.json({
+      error: 'file_too_large',
+      message: 'Upload exceeds the 95 MB signed-upload limit. Use rclone/AWS CLI to upload this file directly to R2 (S3 multipart).',
+    }, 413)
+  }
+
+  // Optional integrity check: if the client computed the SHA-256 ahead of upload,
+  // pass it through so R2 rejects the object on mismatch.
+  const clientChecksum = c.req.header('X-Checksum-SHA256')?.trim().toLowerCase() || null
+  if (clientChecksum && !SHA256_HEX_RE.test(clientChecksum)) {
+    return c.json({ error: 'invalid_checksum', message: 'X-Checksum-SHA256 must be a 64-character hex string' }, 400)
+  }
+
+  // Content type: release zips default to application/zip; file-manager
+  // uploads may set their own via the token payload.
+  const declaredType = typeof payload.content_type === 'string' ? payload.content_type : ''
+  const putOptions: import('@cloudflare/workers-types').R2PutOptions = {
+    httpMetadata: {
+      contentType: target === 'file' && declaredType ? declaredType : 'application/zip',
+    },
+  }
+  if (clientChecksum) {
+    putOptions.sha256 = clientChecksum
+  }
+
+  let object: import('@cloudflare/workers-types').R2Object
+  try {
+    object = await c.env.PLUGINS_BUCKET.put(key, body, putOptions)
+  } catch (e: any) {
+    return c.json({ error: 'upload_failed', message: e?.message || 'Failed to store file' }, 500)
+  }
+
+  await c.env.DB.prepare(`INSERT INTO ${usedTable} (jti, expires_at) VALUES (?, ?)`)
+    .bind(jti, new Date(payload.exp * 1000).toISOString())
+    .run()
+
+  return c.json({
+    success: true,
+    zip_path: key,
+    file_size: object.size,
+    checksum: clientChecksum || null,
+  })
+})
+
+// ============================================
+// File Manager (R2) download endpoint
+// ============================================
+
+const MIME_TYPES: Record<string, string> = {
+  // common previewable types used for the File Manager content-type badge
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  json: 'application/json',
+  xml: 'application/xml',
+  md: 'text/markdown',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  html: 'text/html',
+  css: 'text/css',
+  js: 'application/javascript',
+  php: 'text/x-php',
+}
+
+function guessContentType(filename: string, fallback?: string): string {
+  if (fallback && fallback !== 'application/octet-stream') return fallback
+  const ext = filename.split('.').pop()?.toLowerCase() || ''
+  return MIME_TYPES[ext] || fallback || 'application/octet-stream'
+}
+
+// GET /api/files/:token
+// Downloads any R2 object through a signed single-use JWT produced by the MCP
+// generate_file_download_link tool. Used by CLI/agents; the admin UI talks to
+// the session-guarded /manage/api/files endpoints instead.
+app.get('/api/files/download/:token', async (c) => {
+  const token = c.req.param('token')
+  if (!token) return c.json({ error: 'token_missing', message: 'Download token is required' }, 401)
+
+  let payload: Record<string, any>
+  try {
+    payload = await verifyHs256(token, c.env.DOWNLOAD_TOKEN_SECRET)
+  } catch (e: any) {
+    return c.json({ error: 'token_invalid', message: e?.message || 'Invalid or expired token' }, 401)
+  }
+
+  if (payload.kind !== 'file-download') {
+    return c.json({ error: 'token_invalid', message: 'Token is not a file-download token' }, 401)
+  }
+  if (!['api.chaton.pro', 'api.chatloka.net'].includes(payload.iss)) {
+    return c.json({ error: 'token_invalid', message: 'Invalid token issuer' }, 401)
+  }
+
+  const key = payload.key
+  const jti = payload.jti
+  if (!jti) return c.json({ error: 'token_invalid', message: 'Missing token id' }, 401)
+  if (typeof key !== 'string' || !key || key.endsWith('/')) {
+    return c.json({ error: 'token_invalid', message: 'Invalid upload target in token' }, 401)
+  }
+
+  // Single-use download token.
+  const alreadyUsed = await c.env.DB.prepare('SELECT jti FROM used_tokens WHERE jti = ? LIMIT 1').bind(jti).first()
+  if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This download token has already been used' }, 401)
+
+  const object = await c.env.PLUGINS_BUCKET.get(key)
+  if (!object || !object.body) {
+    return c.json({ error: 'file_not_found', message: `File '${key}' is not available on server` }, 404)
+  }
+
+  await c.env.DB.prepare('INSERT INTO used_tokens (jti, expires_at) VALUES (?, ?)')
+    .bind(jti, new Date(payload.exp * 1000).toISOString())
+    .run()
+
+  const filename = key.split('/').pop() || key
+  const contentType = guessContentType(filename, object.httpMetadata?.contentType)
+  const storedSha = object.checksums?.sha256
+
+  const headers: Record<string, string> = {
+    'Content-Type': contentType,
+    'Content-Disposition': `attachment; filename="${filename}"`,
+  }
+  if (object.httpEtag) headers['ETag'] = object.httpEtag
+  if (typeof storedSha === 'string') headers['X-Checksum-SHA256'] = storedSha
+
+  return new Response(object.body, {
+    status: 200,
+    headers,
   })
 })
 

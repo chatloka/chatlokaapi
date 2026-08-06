@@ -202,6 +202,7 @@ const CATEGORIES: ToolCategory[] = [
   "Tickets",
   "Contacts",
   "Releases",
+  "Files",
   "Notifications",
   "Monitoring",
 ]
@@ -274,7 +275,7 @@ export function Mcp() {
           <CardContent>
             <p className="text-sm font-semibold">{MCP_TOOLS.length} tools</p>
             <p className="text-xs text-muted-foreground">
-              {CATEGORIES.length} categories — licenses, plugins, tickets, contacts, releases, notifications & monitoring
+              {CATEGORIES.length} categories — licenses, plugins, tickets, contacts, releases, files, notifications & monitoring
             </p>
           </CardContent>
         </Card>

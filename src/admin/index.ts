@@ -7,6 +7,7 @@ import { ResendService } from "../services/resend";
 import { ContactService } from "../services/contact";
 import { EnvatoService } from "../services/envato";
 import { TelegramBotService } from "../services/telegram";
+import { FileManagerService, normalizeFolder } from "../services/fileManager";
 import { broadcastRealtime } from "../realtime/hub";
 import type { CloudflareBindings } from "../types";
 
@@ -1536,4 +1537,150 @@ adminRoutes.post("/telegram/test", async (c) => {
     { parse_mode: "HTML" },
   );
   return c.json({ success: Boolean(sent?.message_id), messageId: sent?.message_id });
+});
+
+// ============================================
+// File Manager (R2 internal files)
+// ============================================
+
+// List objects inside a folder (files + sub-folders). Supports folder-style
+// browsing with delimiter "/", recursive search inside the prefix, cursor
+// pagination and sorting. Everything is session-guarded.
+adminRoutes.get("/files", async (c) => {
+  const fileManager = new FileManagerService(c.env.PLUGINS_BUCKET);
+
+  const path = c.req.query("path") || "";
+  const search = c.req.query("search") || "";
+  const cursor = c.req.query("cursor") || undefined;
+  const rawLimit = parseInt(c.req.query("limit") || "200", 10);
+
+  let result;
+  try {
+    result = await fileManager.list(path, {
+      search: search || undefined,
+      cursor,
+      limit: Math.min(rawLimit, 1000),
+    });
+  } catch (err) {
+    return c.json({ error: { message: err instanceof Error ? err.message : "Failed to list objects" } }, 500);
+  }
+
+  return c.json({
+    path,
+    folders: result.folders,
+    files: result.files,
+    hasMore: result.truncated,
+    cursor: result.cursor,
+  });
+});
+
+// Create a folder (zero-byte placeholder object ending with "/").
+adminRoutes.post("/files/folder", async (c) => {
+  const fileManager = new FileManagerService(c.env.PLUGINS_BUCKET);
+  const body = await c.req.json<{ path?: string }>();
+  const raw = (body.path || "").trim();
+
+  if (!raw) {
+    return c.json({ error: { message: "path is required" } }, 400);
+  }
+  if (raw.length > 500 || raw.includes("..")) {
+    return c.json({ error: { message: "Invalid folder path" } }, 400);
+  }
+
+  try {
+    const key = await fileManager.createFolder(raw);
+    return c.json({ success: true, key }, 201);
+  } catch (err) {
+    return c.json({ error: { message: err instanceof Error ? err.message : "Failed to create folder" } }, 500);
+  }
+});
+
+// Delete a single object or an entire folder (recursive).
+adminRoutes.delete("/files", async (c) => {
+  const fileManager = new FileManagerService(c.env.PLUGINS_BUCKET);
+  const body = await c.req.json<{ key?: string; path?: string }>();
+  const key = (body.key || body.path || "").trim();
+
+  if (!key) {
+    return c.json({ error: { message: "key is required" } }, 400);
+  }
+
+  try {
+    const result = await fileManager.deletePath(key);
+    return c.json({ success: true, ...result });
+  } catch (err) {
+    return c.json({ error: { message: err instanceof Error ? err.message : "Failed to delete" } }, 500);
+  }
+});
+
+// Stream a single file (session-guarded, used by the UI for download/preview).
+adminRoutes.get("/files/download", async (c) => {
+  const key = (c.req.query("key") || "").trim();
+  const mode = c.req.query("mode") === "inline" ? "inline" : "attachment";
+
+  if (!key) {
+    return c.json({ error: { message: "key is required" } }, 400);
+  }
+
+  const object = await c.env.PLUGINS_BUCKET.get(key);
+  if (!object || !object.body) {
+    return c.json({ error: { message: "File not found in storage" } }, 404);
+  }
+
+  const filename = key.split("/").pop() || key;
+  const contentType =
+    object.httpMetadata?.contentType && object.httpMetadata.contentType !== "application/octet-stream"
+      ? object.httpMetadata.contentType
+      : "application/octet-stream";
+  const storedSha = object.checksums?.sha256;
+
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    "Content-Disposition": `${mode}; filename="${filename}"`,
+  };
+  if (object.httpEtag) headers["ETag"] = object.httpEtag;
+  if (typeof storedSha === "string") headers["X-Checksum-SHA256"] = storedSha;
+
+  return new Response(object.body, {
+    status: 200,
+    headers,
+  });
+});
+
+// Upload a file directly (multipart, session-guarded, for the admin UI).
+// Files up to 95 MB are accepted (Cloudflare request body limit is 100 MB);
+// larger files must go through the MCP rclone workflow.
+adminRoutes.post("/files/upload", async (c) => {
+  const fileManager = new FileManagerService(c.env.PLUGINS_BUCKET);
+  const MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
+
+  const formData = await c.req.formData();
+  const file = formData.get("file");
+  const path = ((formData.get("path") as string) || "").trim();
+
+  if (!(file instanceof File)) {
+    return c.json({ error: { message: "file is required" } }, 400);
+  }
+  if (!file.name || file.name.includes("/") || file.name.includes("\\")) {
+    return c.json({ error: { message: "Invalid file name" } }, 400);
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return c.json({
+      error: { message: "File exceeds the 95 MB UI upload limit. Use the MCP rclone workflow for larger files." },
+    }, 413);
+  }
+
+  const folder = normalizeFolder(path);
+  const key = `${folder}${file.name}`;
+  const contentType = file.type || "application/octet-stream";
+
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const checksum = Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  const object = await fileManager.putFile(key, buffer, { contentType, sha256: checksum });
+
+  return c.json({ success: true, key, file_size: object.size, checksum }, 201);
 });

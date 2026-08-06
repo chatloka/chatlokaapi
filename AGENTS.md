@@ -42,7 +42,7 @@
 | **Hono** | 4.13+ | HTTP framework |
 | **Better Auth** | 1.6+ | Authentication (PBKDF2 via Web Crypto API) |
 | **D1** | — | SQLite database on Cloudflare (binding: `DB`) |
-| **R2** | — | Object storage for plugin .zip files (binding: `PLUGINS_BUCKET`) |
+| **R2** | — | Object storage for plugin + app release .zip files (binding: `PLUGINS_BUCKET`) |
 | **MCP SDK** | 2.0+ | Model Context Protocol server (`@modelcontextprotocol/server` + `@modelcontextprotocol/hono`) |
 | **TypeScript** | 6.0 | Language |
 | **Wrangler** | — | CLI, build, deploy |
@@ -59,6 +59,7 @@
 | **React Router** | — | Client-side routing |
 | **Recharts** | — | Charts (Dashboard) |
 | **Sonner** | — | Toast notifications |
+| **react-markdown** | 10+ | Markdown rendering (File Manager `.md` preview) + `remark-gfm`, `rehype-highlight`, `highlight.js` |
 | **Cloudflare Vite plugin** | — | SPA + Worker in single project |
 
 ### Dev Tools
@@ -105,10 +106,11 @@ chatlokaapi/
 │   ├── services/
 │   │   ├── license.ts        # LicenseService (D1 CRUD + tamper detection)
 │   │   ├── plugin.ts         # PluginService (D1 + R2)
+│   │   ├── fileManager.ts    # FileManagerService (R2 list/folder/delete/upload)
 │   │   ├── telegram.ts       # Telegram bot (Bot API client + TelegramBotService)
 │   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens)
 │   ├── mcp/
-│   │   └── index.ts          # MCP server (40 tools, Streamable HTTP)
+│   │   └── index.ts          # MCP server (49 tools, Streamable HTTP)
 │   └── ui/
 │       ├── main.tsx           # React entry (BrowserRouter, Toaster)
 │       ├── App.tsx            # Routes definition
@@ -117,6 +119,7 @@ chatlokaapi/
 │       │   ├── Layout.tsx     # Sidebar + avatar menu + mobile hamburger
 │       │   ├── ProtectedRoute.tsx
 │       │   ├── Skeletons.tsx  # DashboardSkeleton, TableSkeleton, CardTableSkeleton
+│       │   ├── MarkdownView.tsx # react-markdown renderer (GFM + highlight + copy button)
 │       │   └── ui/            # shadcn components
 │       └── pages/
 │           ├── Login.tsx      # Email/password, rememberMe
@@ -124,6 +127,8 @@ chatlokaapi/
 │           ├── Licenses.tsx   # CRUD, search, sort, pagination
 │           ├── Plugins.tsx    # List grouped by slug
 │           ├── PluginDetail.tsx # Per-plugin versions
+│           ├── FileManager.tsx # R2 file manager (list/upload/folder/preview/delete)
+│           ├── MarkdownPreview.tsx # Rendered .md preview page (react-markdown)
 │           ├── Logs.tsx       # API logs + tamper logs tabs
 │           ├── Mcp.tsx        # MCP documentation page
 │           ├── Telegram.tsx   # Telegram bot admin (config, webhook logs, bot logs)
@@ -154,7 +159,7 @@ chatlokaapi/
 | **MCP Endpoint** | `https://api.chatloka.net/mcp` (Streamable HTTP, Bearer token auth) |
 | **Public API** | `https://api.chatloka.net/api/validate`, `/activate`, `/deactivate`, `/verify` |
 | **Plugin Downloads** | `https://api.chatloka.net/downloads/` |
-| **R2 Path Format** | `plugins/releases/{slug}/{slug}-{version}.zip` |
+| **R2 Path Format** | Plugin: `plugins/{slug}/{version}/{slug}-{version}.zip` · App: `app-releases/{version}/chatloka-{version}.zip` |
 
 ---
 
@@ -169,6 +174,8 @@ chatlokaapi/
 | GET | `/api/verify` | Verify purchase code via Envato | 10/min |
 | GET | `/api/plugins/token` | Get plugin download token | 20/min |
 | GET | `/downloads/:token` | Download plugin zip from R2 | 60/min |
+| PUT | `/api/uploads/:token` | Upload release zip to R2 (one-time signed token via MCP, ≤95 MB; larger files → rclone) | — |
+| GET | `/api/files/download/:token` | File Manager download (one-time signed token via MCP, 1hr) | — |
 | GET | `/api/stats` | Public stats (license counts, tamper, recent) | — |
 | POST | `/api/webhooks/telegram` | Telegram bot webhook (secret-token verified) | — |
 | POST | `/api/webhooks/resend` | Resend inbound email webhook (svix verified) | — |
@@ -190,6 +197,11 @@ chatlokaapi/
 | GET | `/manage/api/logs/endpoints` | Distinct endpoints |
 | GET | `/manage/api/logs/tamper` | Tamper detection logs (search, sort, page, limit) |
 | GET | `/manage/api/logs/webhooks` | Webhook payload logs (provider, handled, page, limit) |
+| GET | `/manage/api/files` | File Manager list (path, search, cursor, limit) |
+| POST | `/manage/api/files/folder` | Create folder (zero-byte placeholder object) |
+| DELETE | `/manage/api/files` | Delete file or folder (recursive) |
+| GET | `/manage/api/files/download` | Stream a file (`?key=`, `mode=inline|attachment`) |
+| POST | `/manage/api/files/upload` | Upload file (multipart, ≤95 MB, session auth) |
 | GET | `/manage/api/telegram/overview` | Telegram bot overview (config, stats, providers, top actions) |
 | GET | `/manage/api/telegram/bot-logs` | Telegram bot action logs (action, sort, page, limit) |
 | GET | `/manage/api/telegram/webhook-info` | Current Telegram webhook + bot info |
@@ -201,11 +213,11 @@ chatlokaapi/
 ### MCP (Bearer token required)
 | Method | Path | Description |
 |---|---|---|
-| ALL | `/mcp` | MCP Streamable HTTP endpoint (40 tools) |
+| ALL | `/mcp` | MCP Streamable HTTP endpoint (49 tools) |
 
 ---
 
-## MCP Tools (40 total)
+## MCP Tools (49 total)
 
 ### License Management
 - `get_licenses` — List all licenses
@@ -223,6 +235,8 @@ chatlokaapi/
 - `get_plugin_versions` — Version history for a plugin
 - `get_plugin_download_logs` — Download history
 - `generate_plugin_download_link` — Generate JWT download token (1hr, single-use)
+- `generate_plugin_upload_link` — Step 1 of release: one-time signed PUT URL (≤95 MB) or rclone instructions (>95 MB)
+- `publish_plugin_version` — Step 2 of release (manual): register uploaded zip as latest (checksum required)
 
 ### Ticket Management (Support)
 - `get_tickets` — List tickets (status/search/sort/pagination + contact badges)
@@ -249,11 +263,20 @@ chatlokaapi/
 ### App Release Management
 - `get_app_versions` — List all Chatloka app release versions
 - `generate_release_download_link` — Generate 1hr single-use JWT download link for a release
+- `generate_app_upload_link` — Step 1 of release: one-time signed PUT URL (≤95 MB) or rclone instructions (>95 MB)
+- `publish_app_version` — Step 2 of release (manual): register uploaded zip as latest (checksum required)
 - `get_app_update_logs` — Client-side app update logs (success/failure per license)
 
 ### Notifications
 - `get_notifications` — Admin notification feed + unread count
 - `mark_notifications_read` — Mark single or all notifications read
+
+### File Manager (R2)
+- `get_files` — List files/folders in R2 (folder-style, recursive search)
+- `create_folder` — Create a folder (zero-byte placeholder object)
+- `generate_file_upload_link` — Signed PUT URL (≤95 MB) or rclone instructions (>95 MB); no publish step
+- `generate_file_download_link` — 1hr single-use download URL
+- `delete_file` — Delete file or folder (recursive)
 
 ### Monitoring
 - `get_api_logs` — API request logs with filtering
@@ -377,6 +400,14 @@ run_worker_first: ["/api/*", "/manage/api/*", "/downloads/*", "/mcp"]
 
 ### MCP returns 405 Method Not Allowed
 `/mcp` must be in the `run_worker_first` array in `scripts/patch-wrangler.js`. All HTTP methods (GET, POST, etc.) must be handled — use `app.all('/mcp')`.
+
+### Releasing a plugin or app version via MCP
+Upload and publish are TWO separate manual steps (never combined):
+1. `generate_plugin_upload_link` / `generate_app_upload_link` — returns a one-time signed PUT URL (`PUT /api/uploads/:token`). Files ≤ 95 MB stream through the worker via `curl -T` (optional `X-Checksum-SHA256` header → R2 validates); files > 95 MB get rclone/AWS CLI instructions to upload straight to R2 (S3 multipart, resumable).
+2. `publish_plugin_version` / `publish_app_version` — always manual, `checksum` is REQUIRED (SHA-256 hex, compute with `sha256sum` where the zip lives). Verifies the object exists in R2 (`bucket.head`), then inserts the DB row and marks it latest. Checksum is used for tamper-detection integrity checks.
+
+### File Manager (internal files)
+General R2 objects (specs, docs, raw source, custom solutions) live under the `files/` prefix. They are NOT registered in any DB table — the File Manager is a pure R2 view. There is no publish step: `generate_file_upload_link` returns a one-time signed PUT URL (`PUT /api/uploads/:token` with `target: "file"`), the file is live as soon as the curl finishes. Folders are zero-byte placeholder objects with a trailing `/` (standard R2 convention; shown via `delimitedPrefixes` when listing with delimiter `/`). Delete a folder by passing a key ending in `/` (recursive, batch deletes of ≤1000 keys). UI uploads cap at 95 MB (Cloudflare request-body limit is 100 MB); larger files use the rclone workflow. Files with `.md`/`.markdown` extension open in the dedicated rendered markdown page (`/manage/files/preview?key=...&name=...`, powered by `react-markdown` + `remark-gfm` + `rehype-highlight` with a copy button on code blocks).
 
 ### Telegram webhook not firing
 `/api/webhooks/telegram` lives under `/api/*` (already in `run_worker_first`), so it reaches the worker. The bot only reacts to the chat id in `TELEGRAM_ADMIN_CHAT_ID`; other chats are logged as `ignored_chat`. Register webhook via the admin panel (Telegram page → Register Webhook) or the Bot API `setWebhook` with the `X-Telegram-Bot-Api-Secret-Token` header matching `TELEGRAM_WEBHOOK_SECRET`.
