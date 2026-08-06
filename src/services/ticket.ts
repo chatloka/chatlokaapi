@@ -32,6 +32,7 @@ export interface TicketMessage {
   in_reply_to: string | null
   references_header: string | null
   has_attachments: number
+  is_automated?: number
   response_minutes: number | null
   created_at: string
 }
@@ -105,6 +106,74 @@ export class TicketService {
 
   async getTicketById(id: number): Promise<Ticket | null> {
     return first<Ticket>(this.db, 'SELECT * FROM tickets WHERE id = ? LIMIT 1', id)
+  }
+
+  /**
+   * Find a ticket whose number appears in the subject/body.
+   * NOTE: Authorization (owner OR participant) is enforced by the webhook
+   * via isParticipantOrOwner, so a stray ticket number in the subject of an
+   * email from a non-participant sender is rejected upstream.
+   */
+  async findTicketBySubject(subject: string, bodyCandidates: string[] = []): Promise<Ticket | null> {
+    const sources = [subject, ...bodyCandidates]
+    for (const source of sources) {
+      if (!source) continue
+      const match = source.match(/TICKET-\d{4,6}|TKT-\d{4,6}/i)
+      if (!match) continue
+      const normalized = match[0].toUpperCase()
+      if (normalized.startsWith('TKT-')) {
+        const padded = normalized.replace('TKT-', 'TICKET-')
+        const ticket = (await this.getTicketByNumber(padded)) || (await this.getTicketByNumber(normalized))
+        if (ticket) return ticket
+      } else {
+        const ticket = await this.getTicketByNumber(normalized)
+        if (ticket) return ticket
+      }
+    }
+    return null
+  }
+
+  async findOpenTicketBySender(fromEmail: string): Promise<Ticket | null> {
+    return first<Ticket>(
+      this.db,
+      `SELECT * FROM tickets WHERE from_email = ? AND status = 'open' ORDER BY updated_at DESC LIMIT 1`,
+      fromEmail,
+    )
+  }
+
+  async reopenTicket(ticketId: number): Promise<void> {
+    await run(
+      this.db,
+      `UPDATE tickets SET status = 'open', updated_at = datetime('now') WHERE id = ?`,
+      ticketId,
+    )
+  }
+
+  /** Register email addresses (from, to, cc, bcc) as participants of a ticket. */
+  async addParticipants(ticketId: number, emails: string[]): Promise<void> {
+    const seen = new Set<string>()
+    for (const raw of emails) {
+      const email = raw?.trim().toLowerCase()
+      if (!email || seen.has(email)) continue
+      seen.add(email)
+      await run(
+        this.db,
+        'INSERT OR IGNORE INTO ticket_participants (ticket_id, email) VALUES (?, ?)',
+        ticketId,
+        email,
+      )
+    }
+  }
+
+  /** Whether an email is the ticket owner (from_email) or a registered participant (was To/Cc/Bcc). */
+  async isParticipantOrOwner(ticketId: number, email: string): Promise<boolean> {
+    const from = await this.getTicketById(ticketId)
+    const normalized = email?.trim().toLowerCase()
+    if (from && from.from_email.trim().toLowerCase() === normalized) return true
+    const row = await this.db.prepare(
+      'SELECT 1 FROM ticket_participants WHERE ticket_id = ? AND email = ? LIMIT 1'
+    ).bind(ticketId, normalized).first()
+    return !!row
   }
 
   async createTicket(data: {
@@ -189,6 +258,7 @@ export class TicketService {
     in_reply_to?: string | null
     references_header?: string | null
     has_attachments?: number
+    is_automated?: number
   }): Promise<TicketMessage> {
     const now = new Date().toISOString()
 
@@ -217,8 +287,8 @@ export class TicketService {
 
     await run(
       this.db,
-      `INSERT INTO ticket_messages (ticket_id, direction, from_email, to_email, subject, body_html, body_text, resend_email_id, message_id, in_reply_to, references_header, has_attachments, response_minutes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ticket_messages (ticket_id, direction, from_email, to_email, subject, body_html, body_text, resend_email_id, message_id, in_reply_to, references_header, has_attachments, is_automated, response_minutes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       data.ticket_id,
       data.direction,
       data.from_email,
@@ -231,6 +301,7 @@ export class TicketService {
       data.in_reply_to || null,
       data.references_header || null,
       data.has_attachments || 0,
+      data.is_automated || 0,
       responseMinutes,
       now,
     )

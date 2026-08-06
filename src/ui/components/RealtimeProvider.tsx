@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { toast } from "sonner"
 
 export interface RealtimeEvent {
-  type: "ticket_new" | "message_inbound" | "ticket_replied" | "ticket_status_changed" | "notifications_read"
+  type: "ticket_new" | "message_inbound" | "ticket_replied" | "ticket_status_changed" | "ticket_reopened" | "notifications_read"
   ticketId: number
   ticketNumber: string
   subject: string
@@ -92,6 +92,16 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           } else if (data.type === "message_inbound") {
             toast.info(`New reply on ${data.ticketNumber}`, {
               description: `${data.fromEmail}: ${data.subject}`,
+              action: {
+                label: "View",
+                onClick: () => {
+                  window.location.href = `/manage/tickets/${data.ticketNumber}`
+                },
+              },
+            })
+          } else if (data.type === "ticket_reopened") {
+            toast.info(`Ticket re-opened ${data.ticketNumber}`, {
+              description: `${data.fromEmail} followed up on a closed/pending ticket`,
               action: {
                 label: "View",
                 onClick: () => {

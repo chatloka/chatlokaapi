@@ -7,6 +7,7 @@ import { PluginService } from './services/plugin'
 import { AppUpdateService } from './services/appUpdate'
 import { ResendService } from './services/resend'
 import { TicketService } from './services/ticket'
+import type { Ticket } from './services/ticket'
 import { NotificationService } from './services/notification'
 import { requireValidLicense, type LicenseContextVariables } from './middleware/requireValidLicense'
 import { getClientIp } from './http'
@@ -830,6 +831,109 @@ app.post('/api/app/update-result', requireValidLicense, async (c) => {
 // Resend Webhook Handler (Ticket System)
 // ============================================
 
+async function sendTicketAcknowledgement(
+  env: CloudflareBindings,
+  ticketService: TicketService,
+  ticket: Ticket,
+  customerEmail: string,
+  originalSubject: string,
+  resendService: ResendService,
+  reopened = false,
+): Promise<void> {
+  const fromName = env.TICKET_FROM_NAME || 'Chatloka Support'
+  const fromEmail = env.TICKET_FROM_EMAIL || 'contact@support.chatloka.net'
+  const from = `${fromName} <${fromEmail}>`
+  const ticketNumber = ticket.ticket_number
+
+  const ackSubject = reopened
+    ? `[${ticketNumber}] ${originalSubject} has been reopened`
+    : `[${ticketNumber}] ${originalSubject} has been opened`
+
+  const ackHtml = reopened
+    ? `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;">
+      <h2 style="margin:0 0 16px;font-size:20px;">Your ticket has been re-opened</h2>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">Dear valued customer,</p>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
+        Thank you for reaching out again. Your support ticket has been successfully re-opened and is now being processed by our team.
+      </p>
+      <div style="margin:0 0 16px;padding:16px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;">
+        <div style="font-size:12px;color:#6b7280;margin-bottom:4px;">Ticket ID</div>
+        <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;font-weight:600;color:#111827;">${ticketNumber}</div>
+      </div>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
+        A member of our support team will get in touch with you regarding this ticket shortly. No further action is required on your end at this time.
+      </p>
+      <p style="margin:0;font-size:14px;line-height:1.6;">Thank you for your patience and understanding.</p>
+      <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
+        Chatloka Support &middot; support@chatloka.net
+      </div>
+    </div>`
+    : `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;">
+      <h2 style="margin:0 0 16px;font-size:20px;">Your message has been received</h2>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">Dear valued customer,</p>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
+        Thank you for contacting Chatloka Support. Your request has been received, and a support ticket has been created to track it.
+      </p>
+      <div style="margin:0 0 16px;padding:16px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;">
+        <div style="font-size:12px;color:#6b7280;margin-bottom:4px;">Your ticket ID</div>
+        <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;font-weight:600;color:#111827;">${ticketNumber}</div>
+      </div>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
+        Please keep this ticket ID for reference. When replying to this email, the ticket ID in the subject enables our team to route your messages to the correct ticket automatically.
+      </p>
+      <p style="margin:0;font-size:14px;line-height:1.6;">
+        A support representative will respond to your request as soon as possible. Thank you for your patience.
+      </p>
+      <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
+        Chatloka Support &middot; support@chatloka.net
+      </div>
+    </div>`
+
+  const ackText = reopened
+    ? `Your ticket has been re-opened.\n\nDear valued customer,\n\nThank you for contacting Chatloka Support. Your support ticket ${ticketNumber} has been successfully reopened and is being processed by our team.\n\nA member of our support team will reach out to you shortly. No further action is required on your end at this time.\n\nThank you for your patience and understanding.\n\nChatloka Support`
+    : `Your message has been received.\n\nDear valued customer,\n\nThank you for contacting Chatloka Support. Your request has been received, and a support ticket has been created to track it.\n\nTicket ID: ${ticketNumber}\n\nPlease keep this ticket ID for reference.\n\nOur support team will respond to your request as soon as possible.\n\nChatloka Support`
+
+  const result = await resendService.sendEmail({
+    from,
+    to: [customerEmail],
+    subject: ackSubject,
+    html: ackHtml,
+    text: ackText,
+  })
+
+  // Real Message-ID so the customer's reply to the ack maps back to this ticket.
+  let sentMessageId = result.id
+  try {
+    const sent = await resendService.getSentEmail(result.id)
+    if (sent?.message_id) sentMessageId = sent.message_id
+  } catch (sentErr) {
+    console.error('[Ticket Ack] Failed to fetch sent Message-ID:', sentErr)
+  }
+
+  // Store the ack as an automated outbound message in the ticket thread.
+  await ticketService.createMessage({
+    ticket_id: ticket.id,
+    direction: 'outbound',
+    from_email: fromEmail,
+    to_email: customerEmail,
+    subject: ackSubject,
+    body_html: ackHtml,
+    body_text: ackText,
+    resend_email_id: result.id,
+    message_id: sentMessageId,
+    is_automated: 1,
+  })
+
+  // Register it in the thread so the customer's reply (In-Reply-To = ack Message-ID) routes to this ticket.
+  await ticketService.createEmailThread({
+    ticket_id: ticket.id,
+    message_id: sentMessageId,
+    parent_message_id: null,
+  })
+}
+
 app.post('/api/webhooks/resend', async (c) => {
   try {
     const payload = await c.req.text()
@@ -873,11 +977,56 @@ app.post('/api/webhooks/resend', async (c) => {
     const inReplyTo = email.headers?.['in-reply-to'] || email.headers?.['In-Reply-To'] || null
     const references = email.headers?.references || email.headers?.['References'] || null
 
+    // Recipients of this email (To/Cc/Bcc) become potential participants of the ticket.
+    const recipientEmails: string[] = [
+      ...(Array.isArray(event.data.to) ? event.data.to : []),
+      ...(Array.isArray(event.data.cc) ? event.data.cc : []),
+      ...(Array.isArray(event.data.bcc) ? event.data.bcc : []),
+    ]
+      .filter(Boolean)
+      .map((e: string) => e.trim().toLowerCase())
+    const senderEmail = (event.data.from || '').trim().toLowerCase()
+
+    // An email is authorized to join a ticket if they are the ticket owner,
+    // OR they have been a participant on the thread (was To/Cc/Bcc before).
+    // This lets a CC'd sender reply (they're a participant) while blocking
+    // strangers who merely copy a ticket number into their subject.
+    const canAccessTicket = async (t: Ticket): Promise<boolean> =>
+      t.from_email.trim().toLowerCase() === senderEmail ||
+      (await ticketService.isParticipantOrOwner(t.id, senderEmail))
+
     let ticket = null
     let isNewTicket = false
+    let wasReopened = false
+
+    // 1. Match by In-Reply-To header (replies to an existing thread),
+    //    then authorize the sender (owner or participant).
     if (inReplyTo) {
-      // Find ticket by message_id in thread table
       ticket = await ticketService.findTicketByMessageId(inReplyTo)
+      if (ticket && !(await canAccessTicket(ticket))) {
+        ticket = null
+      }
+    }
+
+    // 2. Match by ticket number embedded in subject/body (e.g. "TICKET-00001")
+    if (!ticket) {
+      const candidate = await ticketService.findTicketBySubject(
+        event.data.subject || '',
+        [email.text || '', email.html || ''],
+      )
+      if (candidate && (await canAccessTicket(candidate))) {
+        ticket = candidate
+        // If a closed/pending ticket is followed up, automatically re-open it
+        if (ticket.status === 'closed' || ticket.status === 'pending') {
+          await ticketService.reopenTicket(ticket.id)
+          wasReopened = true
+        }
+      }
+    }
+
+    // 3. Fallback: customer has an open ticket open — keep appending to it
+    if (!ticket) {
+      ticket = await ticketService.findOpenTicketBySender(event.data.from)
     }
 
     // Create new ticket if not found
@@ -890,6 +1039,10 @@ app.post('/api/webhooks/resend', async (c) => {
       })
       isNewTicket = true
     }
+
+    // Register this email's participants (sender + To/Cc/Bcc recipients)
+    // so they are authorized to reply to the thread later.
+    await ticketService.addParticipants(ticket.id, recipientEmails)
 
     // Download attachments and upload to R2
     const bucket = c.env.PLUGINS_BUCKET
@@ -972,10 +1125,31 @@ app.post('/api/webhooks/resend', async (c) => {
       parent_message_id: inReplyTo,
     })
 
+    // Auto-acknowledgment emails sent to the customer:
+    //  - New ticket: confirm the ticket has been opened
+    //  - Reopened ticket: confirm the ticket has been re-opened and will be attended
+    if (event.data.from && (isNewTicket || wasReopened)) {
+      try {
+        await sendTicketAcknowledgement(
+          c.env,
+          ticketService,
+          ticket,
+          event.data.from,
+          event.data.subject || '',
+          resendService,
+          wasReopened,
+        )
+      } catch (ackErr) {
+        console.error('[Resend Webhook] Failed to send ticket acknowledgment:', ackErr)
+      }
+    }
+
+    const notifyType = wasReopened ? 'ticket_reopened' : (isNewTicket ? 'ticket_new' : 'message_inbound')
+
     // Broadcast realtime notification to admin clients
     const notificationService = new NotificationService(db)
     await notificationService.create({
-      type: isNewTicket ? 'ticket_new' : 'message_inbound',
+      type: notifyType,
       ticket_id: ticket.id,
       ticket_number: ticket.ticket_number,
       subject: ticket.subject,
@@ -985,7 +1159,7 @@ app.post('/api/webhooks/resend', async (c) => {
 
     const unreadCount = await notificationService.getUnreadCount()
     await broadcastRealtime(c.env, {
-      type: isNewTicket ? 'ticket_new' : 'message_inbound',
+      type: notifyType,
       ticketId: ticket.id,
       ticketNumber: ticket.ticket_number,
       subject: ticket.subject,

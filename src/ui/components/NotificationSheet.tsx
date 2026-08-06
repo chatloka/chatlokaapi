@@ -10,6 +10,7 @@ import {
   IconCheck,
   IconChevronRight,
   IconInbox,
+  IconRefresh,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -38,6 +39,7 @@ const TYPE_META: Record<string, { label: string; icon: typeof IconTicket; color:
   message_inbound: { label: "New reply from customer", icon: IconMail, color: "text-amber-500" },
   ticket_replied: { label: "Reply sent", icon: IconMailForward, color: "text-emerald-500" },
   ticket_status_changed: { label: "Status changed", icon: IconCircleCheck, color: "text-sky-500" },
+  ticket_reopened: { label: "Ticket re-opened", icon: IconRefresh, color: "text-orange-500" },
 }
 
 function toWIB(dateStr: string) {

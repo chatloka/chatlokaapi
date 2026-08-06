@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers'
 import type { CloudflareBindings } from '../types'
 
 export interface RealtimeEvent {
-  type: 'ticket_new' | 'message_inbound' | 'ticket_replied' | 'ticket_status_changed' | 'notifications_read'
+  type: 'ticket_new' | 'message_inbound' | 'ticket_replied' | 'ticket_status_changed' | 'ticket_reopened' | 'notifications_read'
   ticketId: number
   ticketNumber: string
   subject: string

@@ -34,6 +34,15 @@ export interface ReceivedEmail {
   attachments: ReceivedEmailAttachment[]
 }
 
+export interface SentEmail {
+  id: string
+  message_id?: string | null
+  subject?: string | null
+  to?: string[]
+  from?: string | null
+  created_at?: string | null
+}
+
 export interface ReceivedEmailAttachment {
   id: string
   filename: string
@@ -102,6 +111,21 @@ export class ResendService {
     }
 
     return response.json() as Promise<ReceivedEmail>
+  }
+
+  async getSentEmail(emailId: string): Promise<SentEmail> {
+    const response = await fetch(`${this.baseUrl}/emails/${emailId}`, {
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Resend API error: ${response.status} - ${error}`)
+    }
+
+    return response.json() as Promise<SentEmail>
   }
 
   async getAttachmentDownloadUrl(emailId: string, attachmentId: string): Promise<string> {

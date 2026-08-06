@@ -44,6 +44,7 @@ import {
   IconInfoCircle,
   IconAt,
   IconLink,
+  IconRobot,
 } from "@tabler/icons-react";
 
 interface Ticket {
@@ -90,6 +91,7 @@ interface TicketMessage {
   in_reply_to: string | null;
   references_header: string | null;
   has_attachments: number;
+  is_automated?: number;
   created_at: string;
   attachments?: TicketAttachment[];
 }
@@ -549,33 +551,44 @@ export function TicketDetail() {
             {messages.map((msg) => {
               const isOutbound =
                 msg.direction === "outbound" || msg.direction === "outgoing";
+              const isAutomated = msg.is_automated === 1;
+              const borderClass = isAutomated
+                ? "border-purple-500/25 bg-purple-500/5"
+                : isOutbound
+                  ? "ml-0 border-blue-500/20 bg-blue-500/5 sm:ml-8"
+                  : "mr-0 border-border bg-card sm:mr-8";
               return (
                 <div
                   key={msg.id}
-                  className={`flex flex-col gap-1.5 rounded-lg border p-3 ${
-                    isOutbound
-                      ? "ml-0 border-blue-500/20 bg-blue-500/5 sm:ml-8"
-                      : "mr-0 border-border bg-card sm:mr-8"
-                  }`}
+                  className={`flex flex-col gap-1.5 rounded-lg border p-3 ${borderClass}`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <div
                         className={`flex h-6 w-6 items-center justify-center rounded-full ${
-                          isOutbound
-                            ? "bg-blue-500/15 text-blue-400"
-                            : "bg-muted text-muted-foreground"
+                          isAutomated
+                            ? "bg-purple-500/15 text-purple-400"
+                            : isOutbound
+                              ? "bg-blue-500/15 text-blue-400"
+                              : "bg-muted text-muted-foreground"
                         }`}
                       >
-                        {isOutbound ? (
+                        {isAutomated ? (
+                          <IconRobot size={12} />
+                        ) : isOutbound ? (
                           <IconMailForward size={12} />
                         ) : (
                           <IconUser size={12} />
                         )}
                       </div>
                       <span className="text-sm font-medium text-foreground">
-                        {isOutbound ? "Admin" : msg.from_email}
+                        {isAutomated ? "Chatloka Support (Automated)" : isOutbound ? "Admin" : msg.from_email}
                       </span>
+                      {isAutomated && (
+                        <span className="rounded-full bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-purple-400">
+                          Auto-reply
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs text-muted-foreground">
                       {toWIB(msg.created_at)}

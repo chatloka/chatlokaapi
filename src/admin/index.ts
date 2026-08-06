@@ -751,6 +751,29 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   const messages = await ticketService.getTicketMessages(ticket.id);
   const lastMessage = messages[messages.length - 1];
 
+  // Auto-generated tracking footer (kept small, mono-style)
+  const sentAt = new Date().toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const footerHtml = `
+    <div style="margin-top:24px;padding-top:12px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">
+      <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
+        Ticket ID: ${ticket.ticket_number}
+      </div>
+      <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:2px;">
+        Sent at: ${sentAt}
+      </div>
+    </div>`;
+  bodyHtml = `${bodyHtml}\n${footerHtml}`;
+  if (bodyText) {
+    bodyText = `${bodyText}\n\n--\nTicket ID: ${ticket.ticket_number}\nSent at: ${sentAt}`;
+  }
+
   // Build headers for threading
   const headers: Record<string, string> = {};
   if (lastMessage?.message_id) {
@@ -768,7 +791,7 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   const result = await resendService.sendEmail({
     from,
     to: [ticket.from_email],
-    subject: `Re: ${ticket.subject}`,
+    subject: `Re: [${ticket.ticket_number}] ${ticket.subject}`,
     html: bodyHtml,
     text: bodyText,
     headers,
@@ -778,6 +801,16 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
       content_type: a.content_type,
     })),
   });
+
+  // Fetch the real Message-ID header of the sent email so that
+  // future customer replies (which reference it in In-Reply-To) map back to this ticket.
+  let sentMessageId = result.id;
+  try {
+    const sent = await resendService.getSentEmail(result.id);
+    if (sent?.message_id) sentMessageId = sent.message_id;
+  } catch (sentErr) {
+    console.error("[Ticket Reply] Failed to fetch sent email Message-ID:", sentErr);
+  }
 
   // Store outbound message
   const message = await ticketService.createMessage({
@@ -789,7 +822,7 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
     body_html: bodyHtml,
     body_text: bodyText,
     resend_email_id: result.id,
-    message_id: result.id,
+    message_id: sentMessageId,
     has_attachments: uploadedAttachments.length > 0 ? 1 : 0,
   });
 
@@ -821,7 +854,7 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   // Create email thread
   await ticketService.createEmailThread({
     ticket_id: ticket.id,
-    message_id: result.id,
+    message_id: sentMessageId,
     parent_message_id: lastMessage?.message_id,
   });
 

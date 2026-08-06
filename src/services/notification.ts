@@ -14,7 +14,7 @@ export interface Notification {
 }
 
 export type NotificationInput = {
-  type: 'ticket_new' | 'message_inbound' | 'ticket_replied' | 'ticket_status_changed'
+  type: 'ticket_new' | 'message_inbound' | 'ticket_replied' | 'ticket_status_changed' | 'ticket_reopened'
   ticket_id: number
   ticket_number: string
   subject: string
