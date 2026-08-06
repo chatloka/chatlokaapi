@@ -110,7 +110,7 @@ chatlokaapi/
 │   │   ├── telegram.ts       # Telegram bot (Bot API client + TelegramBotService)
 │   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens)
 │   ├── mcp/
-│   │   └── index.ts          # MCP server (49 tools, Streamable HTTP)
+│   │   └── index.ts          # MCP server (50 tools, Streamable HTTP)
 │   └── ui/
 │       ├── main.tsx           # React entry (BrowserRouter, Toaster)
 │       ├── App.tsx            # Routes definition
@@ -129,7 +129,7 @@ chatlokaapi/
 │           ├── PluginDetail.tsx # Per-plugin versions
 │           ├── FileManager.tsx # R2 file manager (list/upload/folder/preview/delete)
 │           ├── MarkdownPreview.tsx # Rendered .md preview page (react-markdown)
-│           ├── Logs.tsx       # API logs + tamper logs tabs
+│           ├── Logs.tsx       # API logs + tamper + MCP audit logs tabs
 │           ├── Mcp.tsx        # MCP documentation page
 │           ├── Telegram.tsx   # Telegram bot admin (config, webhook logs, bot logs)
 │           └── Profile.tsx    # User info, password change
@@ -197,6 +197,7 @@ chatlokaapi/
 | GET | `/manage/api/logs/endpoints` | Distinct endpoints |
 | GET | `/manage/api/logs/tamper` | Tamper detection logs (search, sort, page, limit) |
 | GET | `/manage/api/logs/webhooks` | Webhook payload logs (provider, handled, page, limit) |
+| GET | `/manage/api/mcp-logs` | MCP audit logs (method, tool, client, search, sort, page, limit) |
 | GET | `/manage/api/files` | File Manager list (path, search, cursor, limit) |
 | POST | `/manage/api/files/folder` | Create folder (zero-byte placeholder object) |
 | DELETE | `/manage/api/files` | Delete file or folder (recursive) |
@@ -213,11 +214,11 @@ chatlokaapi/
 ### MCP (Bearer token required)
 | Method | Path | Description |
 |---|---|---|
-| ALL | `/mcp` | MCP Streamable HTTP endpoint (49 tools) |
+| ALL | `/mcp` | MCP Streamable HTTP endpoint (50 tools) |
 
 ---
 
-## MCP Tools (49 total)
+## MCP Tools (50 total)
 
 ### License Management
 - `get_licenses` — List all licenses
@@ -283,6 +284,7 @@ chatlokaapi/
 - `get_tamper_logs` — Tamper detection logs
 - `get_api_stats` — 24h API statistics
 - `get_dashboard_stats` — Aggregate dashboard statistics
+- `get_mcp_logs` — MCP request/response audit logs (method, tool, params, response, client, session, IP)
 
 ---
 
@@ -300,6 +302,7 @@ chatlokaapi/
 | `webhook_logs` | Raw webhook payloads (telegram + resend) |
 | `telegram_bot_logs` | Telegram bot action audit trail |
 | `telegram_chat_state` | Per-chat multi-step state (reply flow) |
+| `mcp_logs` | MCP request/response audit logs (method, tool, params, response, client, session, IP) |
 | `user` | Better Auth users |
 | `session` | Better Auth sessions |
 | `account` | Better Auth accounts |
@@ -400,6 +403,9 @@ run_worker_first: ["/api/*", "/manage/api/*", "/downloads/*", "/mcp"]
 
 ### MCP returns 405 Method Not Allowed
 `/mcp` must be in the `run_worker_first` array in `scripts/patch-wrangler.js`. All HTTP methods (GET, POST, etc.) must be handled — use `app.all('/mcp')`.
+
+### MCP audit logs
+Every `/mcp` request (authorized or not) is written to `mcp_logs`: JSON-RPC method, tool name, request params, response body, HTTP status, duration, client info (from `initialize` clientInfo), session id, IP, user agent. Payloads are truncated at 20 KB (`params`/`response`) or 200 chars (short fields) with a `…[truncated]` suffix. Viewable via the Logs page (MCP Logs tab), `GET /manage/api/mcp-logs`, or the `get_mcp_logs` MCP tool. Unauthorized attempts are stored with method `unauthorized` and status 401.
 
 ### Releasing a plugin or app version via MCP
 Upload and publish are TWO separate manual steps (never combined):

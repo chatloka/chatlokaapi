@@ -93,6 +93,56 @@ app.use('/api/*', async (c, next) => {
   }
 })
 
+// Maximum characters of request/response payload stored per MCP log row.
+const MAX_MCP_LOG_BODY = 20000
+const MAX_MCP_LOG_SHORT = 200
+
+async function logMcpRequest(
+  c: Context,
+  entry: {
+    ip: string
+    userAgent: string
+    method: string
+    tool: string | null
+    params: string | null
+    clientName: string | null
+    clientVersion: string | null
+    sessionId: string | null
+    statusCode: number
+    durationMs: number
+    responseBody: string
+  }
+) {
+  const truncate = (s: string | null, max: number) => {
+    if (s === null || s === undefined) return null
+    if (s.length <= max) return s
+    return `${s.slice(0, max)}…[truncated]`
+  }
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO mcp_logs (method, tool, params, response, is_error, status_code, duration_ms, client_name, client_version, session_id, ip_address, user_agent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+    )
+      .bind(
+        entry.method,
+        truncate(entry.tool, MAX_MCP_LOG_SHORT),
+        truncate(entry.params, MAX_MCP_LOG_BODY),
+        truncate(entry.responseBody, MAX_MCP_LOG_BODY),
+        entry.statusCode >= 400 ? 1 : 0,
+        entry.statusCode,
+        entry.durationMs,
+        truncate(entry.clientName, MAX_MCP_LOG_SHORT),
+        truncate(entry.clientVersion, MAX_MCP_LOG_SHORT),
+        truncate(entry.sessionId, MAX_MCP_LOG_SHORT),
+        truncate(entry.ip, MAX_MCP_LOG_SHORT),
+        truncate(entry.userAgent, MAX_MCP_LOG_SHORT),
+      )
+      .run()
+  } catch (e) {
+    console.error('[MCP Log] Failed to write log:', e)
+  }
+}
+
 async function enforceRateLimit(c: Context, limiter: RateLimit, scope: string) {
   const ip = c.req.header('cf-connecting-ip') || 'unknown-ip'
   const apiKey = c.req.header('x-license-key') || 'anon'
@@ -1775,12 +1825,89 @@ app.route('/manage/api', adminRoutes)
 
 // MCP Server endpoint
 app.all('/mcp', async (c) => {
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
+  const userAgent = c.req.header('user-agent') || ''
   const auth = c.req.header('Authorization')
+
   if (!auth || auth !== `Bearer ${c.env.MCP_API_KEY}`) {
+    await logMcpRequest(c, {
+      ip,
+      userAgent,
+      method: 'unauthorized',
+      tool: null,
+      params: null,
+      clientName: null,
+      clientVersion: null,
+      sessionId: null,
+      statusCode: 401,
+      durationMs: 0,
+      responseBody: '{"error":"Unauthorized"}',
+    })
     return c.json({ error: 'Unauthorized' }, 401)
   }
+
+  const startTime = Date.now()
+  let method: string | null = null
+  let tool: string | null = null
+  let params: string | null = null
+  let clientName: string | null = null
+  let clientVersion: string | null = null
+  let sessionId = c.req.header('Mcp-Session-Id') || null
+
+  if (c.req.method === 'POST' || c.req.method === 'PUT') {
+    try {
+      const cloned = c.req.raw.clone()
+      const bodyText = await cloned.text()
+      const parsed = JSON.parse(bodyText)
+      const bodies = Array.isArray(parsed) ? parsed : [parsed]
+      const first = bodies[0] as Record<string, any> | undefined
+      if (first) {
+        method = String(first.method || 'batch')
+        if (first.params && typeof first.params === 'object') {
+          params = JSON.stringify(first.params)
+          if ('name' in first.params && typeof first.params.name === 'string') {
+            tool = first.params.name
+          }
+        }
+        const clientInfo = first.params?.clientInfo as { name?: string; version?: string } | undefined
+        if (clientInfo?.name) {
+          clientName = clientInfo.name
+          clientVersion = clientInfo.version || null
+        }
+      }
+    } catch {
+      // Non-JSON body — log what we can
+      if (method === null) method = 'unknown'
+    }
+  } else {
+    method = c.req.method
+  }
+
   const handler = createMcpHandler(() => createMcpServer(c.env))
-  return handler.fetch(c.req.raw)
+  const res = await handler.fetch(c.req.raw)
+  const durationMs = Date.now() - startTime
+
+  try {
+    const cloned = res.clone()
+    const responseText = await cloned.text()
+    await logMcpRequest(c, {
+      ip,
+      userAgent,
+      method: method || 'unknown',
+      tool,
+      params,
+      clientName,
+      clientVersion,
+      sessionId: res.headers.get('Mcp-Session-Id') || sessionId,
+      statusCode: res.status,
+      durationMs,
+      responseBody: responseText,
+    })
+  } catch (e) {
+    console.error('[MCP Log] Failed to write log:', e)
+  }
+
+  return res
 })
 
 // SPA fallback - serve assets, fallback to index.html for client-side routing

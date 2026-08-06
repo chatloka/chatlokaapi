@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react"
+import { useEffect, useState, useMemo, useCallback, Fragment } from "react"
 import { parseDbDate } from "@/lib/dates"
 import {
   Card,
@@ -39,6 +39,8 @@ import {
   IconAlertCircle,
   IconServer,
   IconClock,
+  IconTerminal2,
+  IconChevronDown,
 } from "@tabler/icons-react"
 import { CardTableSkeleton } from "@/components/Skeletons"
 
@@ -67,6 +69,23 @@ interface TamperLog {
   created_at: string
 }
 
+interface McpLog {
+  id: number
+  method: string
+  tool: string | null
+  params: string | null
+  response: string | null
+  is_error: number
+  status_code: number
+  duration_ms: number
+  client_name: string | null
+  client_version: string | null
+  session_id: string | null
+  ip_address: string
+  user_agent: string
+  created_at: string
+}
+
 interface Pagination {
   page: number
   limit: number
@@ -81,6 +100,11 @@ interface LogsResponse {
 
 interface TamperLogsResponse {
   logs: TamperLog[]
+  pagination: Pagination
+}
+
+interface McpLogsResponse {
+  logs: McpLog[]
   pagination: Pagination
 }
 
@@ -101,9 +125,11 @@ function toWIB(dateStr: string) {
 export function Logs() {
   const [apiLogs, setApiLogs] = useState<ApiLog[]>([])
   const [tamperLogs, setTamperLogs] = useState<TamperLog[]>([])
+  const [mcpLogs, setMcpLogs] = useState<McpLog[]>([])
   const [loading, setLoading] = useState(true)
   const [apiPagination, setApiPagination] = useState<Pagination>({ page: 1, limit: 50, total: 0, totalPages: 0 })
   const [tamperPagination, setTamperPagination] = useState<Pagination>({ page: 1, limit: 50, total: 0, totalPages: 0 })
+  const [mcpPagination, setMcpPagination] = useState<Pagination>({ page: 1, limit: 50, total: 0, totalPages: 0 })
   const [stats, setStats] = useState<LogStats | null>(null)
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState("newest")
@@ -112,15 +138,21 @@ export function Logs() {
   const [tamperSearch, setTamperSearch] = useState("")
   const [tamperSort, setTamperSort] = useState("newest")
 
+  const [mcpSearch, setMcpSearch] = useState("")
+  const [mcpSort, setMcpSort] = useState("newest")
+  const [expandedMcpId, setExpandedMcpId] = useState<number | null>(null)
+
   const fetchLogs = useCallback(async () => {
     setLoading(true)
     try {
       const searchParam = search ? `&search=${encodeURIComponent(search)}` : ""
       const tamperSearchParam = tamperSearch ? `&search=${encodeURIComponent(tamperSearch)}` : ""
+      const mcpSearchParam = mcpSearch ? `&search=${encodeURIComponent(mcpSearch)}` : ""
 
-      const [apiRes, tamperRes] = await Promise.all([
+      const [apiRes, tamperRes, mcpRes] = await Promise.all([
         fetch(`/manage/api/logs?page=${apiPagination.page}&limit=${apiPagination.limit}&sort=${sort}${searchParam}`, { credentials: "include" }),
         fetch(`/manage/api/logs/tamper?page=${tamperPagination.page}&limit=${tamperPagination.limit}&sort=${tamperSort}${tamperSearchParam}`, { credentials: "include" }),
+        fetch(`/manage/api/mcp-logs?page=${mcpPagination.page}&limit=${mcpPagination.limit}&sort=${mcpSort}${mcpSearchParam}`, { credentials: "include" }),
       ])
 
       if (apiRes.ok) {
@@ -134,12 +166,18 @@ export function Logs() {
         setTamperLogs(tamperData.logs || [])
         setTamperPagination(tamperData.pagination)
       }
+
+      if (mcpRes.ok) {
+        const mcpData: McpLogsResponse = await mcpRes.json()
+        setMcpLogs(mcpData.logs || [])
+        setMcpPagination(mcpData.pagination)
+      }
     } catch (error) {
       console.error("Failed to fetch logs:", error)
     } finally {
       setLoading(false)
     }
-  }, [apiPagination.page, apiPagination.limit, tamperPagination.page, tamperPagination.limit, sort, tamperSort, search, tamperSearch])
+  }, [apiPagination.page, apiPagination.limit, tamperPagination.page, tamperPagination.limit, mcpPagination.page, mcpPagination.limit, sort, tamperSort, mcpSort, search, tamperSearch, mcpSearch])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -181,6 +219,15 @@ export function Logs() {
     if (e.key === "Enter") handleTamperSearch()
   }
 
+  function handleMcpSearch() {
+    setMcpPagination(prev => ({ ...prev, page: 1 }))
+    fetchLogs()
+  }
+
+  function handleMcpSearchKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") handleMcpSearch()
+  }
+
   function getStatusBadge(statusCode: number) {
     if (statusCode >= 200 && statusCode < 300) {
       return <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">{statusCode}</Badge>
@@ -205,6 +252,39 @@ export function Logs() {
       DELETE: "bg-red-500/15 text-red-500 border-red-500/20",
     }
     return <Badge className={colors[method] || ""}>{method}</Badge>
+  }
+
+  function getMcpMethodBadge(method: string) {
+    const colors: Record<string, string> = {
+      "tools/call": "bg-violet-500/15 text-violet-400 border-violet-500/20",
+      initialize: "bg-blue-500/15 text-blue-500 border-blue-500/20",
+      notifications: "bg-sky-500/15 text-sky-400 border-sky-500/20",
+      "unauthorized": "bg-red-500/15 text-red-500 border-red-500/20",
+    }
+    return <Badge className={colors[method] || "bg-muted text-muted-foreground border-border"}>{method}</Badge>
+  }
+
+  function exportMcpCSV() {
+    const headers = ["Time", "Method", "Tool", "Status", "Duration (ms)", "Client", "IP", "Params", "Response"]
+    const rows = mcpLogs.map(log => [
+      new Date(log.created_at).toISOString(),
+      log.method,
+      log.tool || "",
+      log.status_code.toString(),
+      log.duration_ms.toString(),
+      log.client_name || "",
+      log.ip_address,
+      `"${(log.params || "").replace(/"/g, '""')}"`,
+      `"${(log.response || "").replace(/"/g, '""')}"`,
+    ])
+    const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n")
+    const blob = new Blob([csv], { type: "text/csv" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `mcp-logs-${new Date().toISOString().split("T")[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   function exportCSV() {
@@ -400,6 +480,10 @@ export function Logs() {
             <TabsTrigger value="tamper" className="gap-2 cursor-pointer">
               <IconAlertTriangle className="h-4 w-4" />
               Tamper Attempts ({tamperPagination.total})
+            </TabsTrigger>
+            <TabsTrigger value="mcp" className="gap-2 cursor-pointer">
+              <IconTerminal2 className="h-4 w-4" />
+              MCP Logs ({mcpPagination.total})
             </TabsTrigger>
           </TabsList>
           <Button onClick={handleRefresh} variant="outline" size="sm" className="cursor-pointer">
@@ -626,6 +710,154 @@ export function Logs() {
                       </Button>
                       <span className="text-sm">{tamperPagination.page} / {tamperPagination.totalPages}</span>
                       <Button variant="outline" size="sm" disabled={tamperPagination.page >= tamperPagination.totalPages} onClick={() => setTamperPagination(prev => ({ ...prev, page: prev.page + 1 }))} className="cursor-pointer">
+                        <IconChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="mcp">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <IconTerminal2 className="h-5 w-5" />
+                    MCP Request Logs
+                  </CardTitle>
+                  <CardDescription>Every request to /mcp with request params and response body</CardDescription>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="relative">
+                    <IconSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search tool, client, IP..."
+                      value={mcpSearch}
+                      onChange={(e) => setMcpSearch(e.target.value)}
+                      onKeyDown={handleMcpSearchKeyDown}
+                      className="pl-8 w-full sm:w-64 cursor-text"
+                    />
+                  </div>
+                  <Select value={mcpSort} onValueChange={(v) => v && setMcpSort(v)}>
+                    <SelectTrigger className="w-[160px] cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Newest first</SelectItem>
+                      <SelectItem value="oldest">Oldest first</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(mcpPagination.limit)} onValueChange={(v) => setMcpPagination(prev => ({ ...prev, limit: Number(v), page: 1 }))}>
+                    <SelectTrigger className="w-[100px] cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="20">20 / page</SelectItem>
+                      <SelectItem value="50">50 / page</SelectItem>
+                      <SelectItem value="100">100 / page</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button onClick={exportMcpCSV} variant="outline" size="sm" className="cursor-pointer">
+                    <IconDownload className="mr-2 h-4 w-4" />
+                    CSV
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <CardTableSkeleton rows={8} columns={7} />
+              ) : mcpLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <IconTerminal2 className="h-12 w-12 mb-4" />
+                  <p>No MCP requests recorded</p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead />
+                          <TableHead>Time</TableHead>
+                          <TableHead>Method</TableHead>
+                          <TableHead>Tool</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Duration</TableHead>
+                          <TableHead>Client</TableHead>
+                          <TableHead>IP</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {mcpLogs.map((log) => (
+                          <Fragment key={log.id}>
+                            <TableRow
+                              className="cursor-pointer"
+                              onClick={() => setExpandedMcpId(expandedMcpId === log.id ? null : log.id)}
+                            >
+                              <TableCell className="w-6">
+                                {expandedMcpId === log.id
+                                  ? <IconChevronDown className="h-4 w-4 text-muted-foreground" />
+                                  : <IconChevronRight className="h-4 w-4 text-muted-foreground" />}
+                              </TableCell>
+                              <TableCell className="text-xs whitespace-nowrap">{toWIB(log.created_at)}</TableCell>
+                              <TableCell>{getMcpMethodBadge(log.method)}</TableCell>
+                              <TableCell className="font-mono text-xs">
+                                {log.tool ? (
+                                  <Badge className="bg-sky-500/15 text-sky-400 border-sky-500/20">{log.tool}</Badge>
+                                ) : (
+                                  "-"
+                                )}
+                              </TableCell>
+                              <TableCell>{getStatusBadge(log.status_code)}</TableCell>
+                              <TableCell className="text-xs">{log.duration_ms}ms</TableCell>
+                              <TableCell className="text-xs">{log.client_name || "-"}</TableCell>
+                              <TableCell className="font-mono text-xs">{log.ip_address}</TableCell>
+                            </TableRow>
+                            {expandedMcpId === log.id && (
+                              <TableRow>
+                                <TableCell colSpan={8} className="bg-muted/30">
+                                  <div className="grid gap-4 lg:grid-cols-2">
+                                    <div>
+                                      <p className="mb-1 text-xs font-semibold text-muted-foreground">Request Params</p>
+                                      <pre className="max-h-72 overflow-auto rounded-md bg-background p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
+                                        {log.params || "(none)"}
+                                      </pre>
+                                    </div>
+                                    <div>
+                                      <p className="mb-1 text-xs font-semibold text-muted-foreground">Response</p>
+                                      <pre className="max-h-72 overflow-auto rounded-md bg-background p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">
+                                        {log.response || "(empty)"}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[11px] text-muted-foreground">
+                                    <span>Client: <span className="font-mono">{log.client_name || "-"}{log.client_version ? ` v${log.client_version}` : ""}</span></span>
+                                    <span>Session: <span className="font-mono">{log.session_id || "-"}</span></span>
+                                    <span>User-Agent: <span className="font-mono">{log.user_agent || "-"}</span></span>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </Fragment>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="flex items-center justify-between mt-4">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {(mcpPagination.page - 1) * mcpPagination.limit + 1} to {Math.min(mcpPagination.page * mcpPagination.limit, mcpPagination.total)} of {mcpPagination.total}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" disabled={mcpPagination.page <= 1} onClick={() => setMcpPagination(prev => ({ ...prev, page: prev.page - 1 }))} className="cursor-pointer">
+                        <IconChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm">{mcpPagination.page} / {mcpPagination.totalPages}</span>
+                      <Button variant="outline" size="sm" disabled={mcpPagination.page >= mcpPagination.totalPages} onClick={() => setMcpPagination(prev => ({ ...prev, page: prev.page + 1 }))} className="cursor-pointer">
                         <IconChevronRight className="h-4 w-4" />
                       </Button>
                     </div>

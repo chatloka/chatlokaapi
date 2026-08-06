@@ -676,6 +676,67 @@ export function createMcpServer(env: McpEnv) {
   )
 
   server.registerTool(
+    "get_mcp_logs",
+    {
+      description: "Get MCP request/response audit logs. Shows method, tool name, request params, response body, HTTP status, duration, client (clientInfo from initialize), session id, and IP for every call to the /mcp endpoint.",
+      inputSchema: z.object({
+        method: z.string().optional().describe("Filter by JSON-RPC method (initialize, tools/call, ...)"),
+        tool: z.string().optional().describe("Filter by tool name (for tools/call requests)"),
+        is_error: z.boolean().optional().describe("Filter by error state (status >= 400)"),
+        search: z.string().optional().describe("Search across tool, client name, IP, method, and request params"),
+        sort: z.enum(["newest", "oldest"]).optional().describe("Sort order, defaults to newest"),
+        page: z.number().optional().describe("Page number, defaults to 1"),
+        limit: z.number().optional().describe("Results per page, defaults to 50, max 200"),
+      }),
+    },
+    async ({ method, tool, is_error, search, sort, page, limit }) => {
+      const p = Math.max(1, page || 1)
+      const l = Math.min(Math.max(1, limit || 50), 200)
+      const offset = (p - 1) * l
+
+      let whereClause = "WHERE 1=1"
+      const bindings: (string | number)[] = []
+
+      if (method) {
+        whereClause += " AND method = ?"
+        bindings.push(method)
+      }
+
+      if (tool) {
+        whereClause += " AND tool = ?"
+        bindings.push(tool)
+      }
+
+      if (is_error !== undefined) {
+        whereClause += " AND is_error = ?"
+        bindings.push(is_error ? 1 : 0)
+      }
+
+      if (search) {
+        whereClause += " AND (tool LIKE ? OR client_name LIKE ? OR ip_address LIKE ? OR method LIKE ? OR params LIKE ?)"
+        const searchParam = `%${search}%`
+        bindings.push(searchParam, searchParam, searchParam, searchParam, searchParam)
+      }
+
+      const orderClause = sort === "oldest" ? "ASC" : "DESC"
+
+      const [countResult, logsResult] = await env.DB.batch([
+        env.DB.prepare(`SELECT COUNT(*) as total FROM mcp_logs ${whereClause}`).bind(...bindings),
+        env.DB.prepare(
+          `SELECT * FROM mcp_logs ${whereClause} ORDER BY id ${orderClause} LIMIT ? OFFSET ?`
+        ).bind(...bindings, l, offset),
+      ])
+
+      const total = (countResult.results?.[0] as { total: number })?.total || 0
+
+      return text(JSON.stringify({
+        logs: logsResult.results,
+        pagination: { page: p, limit: l, total, totalPages: Math.ceil(total / l) },
+      }, null, 2))
+    }
+  )
+
+  server.registerTool(
     "get_dashboard_stats",
     {
       description: "Get aggregate dashboard statistics. Shows license counts by status, plugin counts, recent tamper attempts, and recent license activity.",

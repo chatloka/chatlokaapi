@@ -38,6 +38,7 @@ import {
   IconBolt,
   IconCircleCheck,
   IconUpload,
+  IconTerminal2,
 } from "@tabler/icons-react"
 
 export type ToolCategory = "License" | "Plugins" | "Tickets" | "Contacts" | "Releases" | "Notifications" | "Monitoring" | "Files"
@@ -704,6 +705,24 @@ export const MCP_TOOLS: McpTool[] = [
       "One-shot aggregate snapshot: license counts by status, plugin/version counts, tamper events in the last 24h, and the 5 most recently created licenses.",
     params: [],
     example: "get_dashboard_stats()",
+  },
+  {
+    name: "get_mcp_logs",
+    category: "Monitoring",
+    icon: <IconTerminal2 className="h-4 w-4" />,
+    short: "MCP request/response audit logs",
+    description:
+      "Audit trail of every /mcp call: JSON-RPC method, tool name, full request params, response body, HTTP status, duration, client (clientInfo from initialize), session id and IP. Filter by method, tool, error state, or search; paginated.",
+    params: [
+      p("method", "string", false, "Filter by JSON-RPC method (initialize, tools/call, ...)"),
+      p("tool", "string", false, "Filter by tool name (for tools/call requests)"),
+      p("is_error", "boolean", false, "Filter by error state (status >= 400)"),
+      p("search", "string", false, "Search across tool, client name, IP, method, request params"),
+      p("page", "number", false, "Page number, defaults to 1"),
+      p("limit", "number", false, "Results per page, defaults to 50, max 200"),
+      p("sort", "newest | oldest", false, "Sort order, defaults to newest"),
+    ],
+    example: "get_mcp_logs({ method: \"tools/call\", tool: \"create_license\" })",
   },
 ]
 

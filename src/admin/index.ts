@@ -379,6 +379,53 @@ adminRoutes.get("/logs/tamper", async (c) => {
   });
 });
 
+// MCP request/response audit logs
+adminRoutes.get("/mcp-logs", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50", 10), 200);
+  const offset = (page - 1) * limit;
+  const search = c.req.query("search") || "";
+  const tool = c.req.query("tool") || "";
+  const sort = c.req.query("sort") || "newest";
+
+  let whereClause = "WHERE 1=1";
+  const bindings: (string | number)[] = [];
+
+  if (search) {
+    whereClause += " AND (tool LIKE ? OR client_name LIKE ? OR ip_address LIKE ? OR method LIKE ? OR params LIKE ?)";
+    const searchParam = `%${search}%`;
+    bindings.push(searchParam, searchParam, searchParam, searchParam, searchParam);
+  }
+
+  if (tool) {
+    whereClause += " AND tool = ?";
+    bindings.push(tool);
+  }
+
+  const orderClause = sort === "oldest" ? "ASC" : "DESC";
+
+  const countStmt = `SELECT COUNT(*) as total FROM mcp_logs ${whereClause}`;
+  const dataStmt = `SELECT * FROM mcp_logs ${whereClause} ORDER BY id ${orderClause} LIMIT ? OFFSET ?`;
+
+  const [logsResult, countResult] = await db.batch([
+    db.prepare(dataStmt).bind(...bindings, limit, offset),
+    db.prepare(countStmt).bind(...bindings),
+  ]);
+
+  const total = (countResult.results?.[0] as { total: number })?.total || 0;
+
+  return c.json({
+    logs: logsResult.results,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
 // Plugin download endpoint (admin - generates a signed download URL)
 adminRoutes.get("/plugins/:slug/download", async (c) => {
   const db = c.env.DB;
