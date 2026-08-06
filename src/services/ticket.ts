@@ -17,6 +17,11 @@ export interface Ticket {
   first_response_minutes: number | null
   merged_into?: number | null
   merged_at?: string | null
+  contact_id?: number | null
+  contact_type?: 'lead' | 'customer' | null
+  latest_purchase_code?: string | null
+  latest_license_type?: 'regular' | 'extended' | null
+  latest_support_until?: string | null
   created_at: string
   updated_at: string
 }
@@ -68,7 +73,21 @@ export class TicketService {
     limit: number,
     options?: { status?: string; search?: string; sort?: string }
   ): Promise<{ tickets: Ticket[]; total: number }> {
-    let query = 'SELECT * FROM tickets WHERE 1=1'
+    let query = `SELECT t.*, c.contact_type, c.latest_purchase_code, c.latest_license_type, c.latest_support_until
+      FROM tickets t
+      LEFT JOIN (
+        SELECT c.id,
+               c.type AS contact_type,
+               cp.purchase_code AS latest_purchase_code,
+               cp.license_type  AS latest_license_type,
+               cp.support_until AS latest_support_until
+        FROM contacts c
+        LEFT JOIN contact_purchases cp ON cp.id = (
+          SELECT cp2.id FROM contact_purchases cp2 WHERE cp2.contact_id = c.id
+          ORDER BY cp2.support_until DESC, cp2.id DESC LIMIT 1
+        )
+      ) c ON c.id = t.contact_id
+      WHERE 1=1`
     let countQuery = 'SELECT COUNT(*) as total FROM tickets WHERE 1=1'
     const params: unknown[] = []
     const countParams: unknown[] = []
@@ -321,6 +340,7 @@ export class TicketService {
     status?: string
     priority?: string
     assigned_to?: string
+    contact_id?: number
   }): Promise<void> {
     const updates: string[] = []
     const params: unknown[] = []
@@ -336,6 +356,10 @@ export class TicketService {
     if (data.assigned_to !== undefined) {
       updates.push('assigned_to = ?')
       params.push(data.assigned_to)
+    }
+    if (data.contact_id !== undefined) {
+      updates.push('contact_id = ?')
+      params.push(data.contact_id)
     }
 
     if (updates.length === 0) return

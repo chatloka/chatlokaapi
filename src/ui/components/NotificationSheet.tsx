@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { parseDbDate } from "@/lib/dates"
 import { useNavigate } from "react-router-dom"
 import {
   IconBell,
@@ -43,7 +44,7 @@ const TYPE_META: Record<string, { label: string; icon: typeof IconTicket; color:
 }
 
 function toWIB(dateStr: string) {
-  const d = new Date(dateStr)
+  const d = parseDbDate(dateStr)
   return d.toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
     day: "2-digit",
@@ -55,7 +56,7 @@ function toWIB(dateStr: string) {
 
 function timeAgoWIB(dateStr: string) {
   const now = Date.now()
-  const then = new Date(dateStr).getTime() + 7 * 3600 * 1000
+  const then = parseDbDate(dateStr).getTime()
   const diff = Math.max(0, now - then)
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return "now"

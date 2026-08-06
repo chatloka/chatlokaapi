@@ -178,3 +178,58 @@
 .msg-auto-body div[style*="border-left"] {
   border-left-color: oklch(0.68 0.17 260) !important;
 }
+
+/* ============================================================
+   Print-to-PDF for the User detail page
+   Hides the admin chrome and forces light colors so the printed
+   PDF is clean and readable. Scoped via body.printing-user-detail
+   (set by UserDetail before window.print()) so printing any other
+   page keeps its normal styles.
+   ============================================================ */
+@media print {
+  body.printing-user-detail {
+    background: #fff !important;
+  }
+  body.printing-user-detail aside,
+  body.printing-user-detail header,
+  body.printing-user-detail button,
+  body.printing-user-detail nav {
+    display: none !important;
+  }
+  body.printing-user-detail main {
+    margin-left: 0 !important;
+    overflow: visible !important;
+  }
+  body.printing-user-detail main > div {
+    padding: 0 !important;
+  }
+  body.printing-user-detail .card,
+  body.printing-user-detail .rounded-lg,
+  body.printing-user-detail .rounded-md,
+  body.printing-user-detail .rounded-xl {
+    box-shadow: none !important;
+    border-color: #ddd !important;
+    break-inside: avoid;
+  }
+  body.printing-user-detail .card *,
+  body.printing-user-detail main * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body.printing-user-detail main * {
+    border-color: #ddd !important;
+  }
+  body.printing-user-detail main .text-foreground,
+  body.printing-user-detail main .font-bold,
+  body.printing-user-detail main .font-medium,
+  body.printing-user-detail main h1,
+  body.printing-user-detail main h2,
+  body.printing-user-detail main h3 {
+    color: #111 !important;
+  }
+  body.printing-user-detail main .text-muted-foreground,
+  body.printing-user-detail main .text-sm,
+  body.printing-user-detail main .text-xs {
+    color: #444 !important;
+  }
+}

@@ -14,6 +14,7 @@ import {
   IconTicket,
   IconChartHistogram,
   IconRocket,
+  IconUsers,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -41,6 +42,13 @@ const navItems = [
   { to: "/manage", icon: IconDashboard, label: "Dashboard", end: true },
   { to: "/manage/licenses", icon: IconKey, label: "Licenses" },
   { to: "/manage/releases", icon: IconRocket, label: "Releases" },
+  {
+    to: "/manage/users",
+    icon: IconUsers,
+    label: "Users",
+    match: (pathname: string) =>
+      pathname === "/manage/users" || pathname.startsWith("/manage/users/"),
+  },
   { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
   { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
   {

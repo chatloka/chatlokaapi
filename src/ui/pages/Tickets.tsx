@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
+import { parseDbDate } from "@/lib/dates"
 import { useNavigate } from "react-router-dom"
 import {
   Card,
@@ -41,6 +42,7 @@ import {
   IconForbid,
 } from "@tabler/icons-react"
 import { CardTableSkeleton } from "@/components/Skeletons"
+import { ContactTypeBadge } from "@/components/ContactBadges"
 
 interface Ticket {
   id: number
@@ -57,6 +59,10 @@ interface Ticket {
   message_count: number
   created_at: string
   updated_at: string
+  contact_type?: "lead" | "customer" | null
+  latest_purchase_code?: string | null
+  latest_license_type?: "regular" | "extended" | null
+  latest_support_until?: string | null
 }
 
 interface TicketStats {
@@ -75,7 +81,7 @@ interface Pagination {
 
 function toWIB(dateStr: string | null) {
   if (!dateStr) return "-"
-  const d = new Date(dateStr)
+  const d = parseDbDate(dateStr)
   return d.toLocaleString("en-GB", {
     timeZone: "Asia/Jakarta",
     day: "2-digit",
@@ -446,11 +452,14 @@ export function Tickets() {
                           <div className="rounded-full bg-primary/10 p-1">
                             <IconUser className="h-3 w-3 text-primary" />
                           </div>
-                          <span className="text-sm truncate max-w-[200px]">
-                            {ticket.from_name
-                              ? `${ticket.from_name} <${ticket.from_email}>`
-                              : ticket.from_email}
-                          </span>
+                          <div className="flex flex-col">
+                            <span className="text-sm truncate max-w-[180px]">
+                              {ticket.from_name
+                                ? `${ticket.from_name} <${ticket.from_email}>`
+                                : ticket.from_email}
+                            </span>
+                            <ContactTypeBadge type={ticket.contact_type} />
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { parseDbDate } from "@/lib/dates"
 import {
   Card,
   CardContent,
@@ -127,7 +128,7 @@ export function Dashboard() {
   ] : []
 
   function toWIB(dateStr: string) {
-    const d = new Date(dateStr)
+    const d = parseDbDate(dateStr)
     return d.toLocaleString("en-GB", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
   }
 

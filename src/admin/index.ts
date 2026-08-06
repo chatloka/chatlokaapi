@@ -4,6 +4,8 @@ import { AppUpdateService } from "../services/appUpdate";
 import { TicketService, type Ticket } from "../services/ticket";
 import { NotificationService } from "../services/notification";
 import { ResendService } from "../services/resend";
+import { ContactService } from "../services/contact";
+import { EnvatoService } from "../services/envato";
 import { broadcastRealtime } from "../realtime/hub";
 import type { CloudflareBindings } from "../types";
 
@@ -568,6 +570,182 @@ adminRoutes.get("/app-update-logs", async (c) => {
 });
 
 // ============================================
+// Contacts (people who ever emailed support)
+// ============================================
+
+// List contacts with Lead/Customer badge info
+adminRoutes.get("/contacts", async (c) => {
+  const db = c.env.DB;
+  const page = parseInt(c.req.query("page") || "1", 10);
+  const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
+  const search = c.req.query("search") || "";
+  const type = c.req.query("type") || "";
+
+  const contactService = new ContactService(db);
+  const { contacts, total } = await contactService.getContactsPaginated(page, limit, {
+    search: search || undefined,
+    type: type === "lead" || type === "customer" ? type : undefined,
+  });
+
+  return c.json({
+    contacts,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  });
+});
+
+// Verify a purchase code against Envato (auto-fill for the add-purchase dialog)
+adminRoutes.post("/contacts/verify-purchase", async (c) => {
+  const body = await c.req.json<{ purchase_code?: string }>();
+  const purchaseCode = (body.purchase_code || "").trim();
+  if (!purchaseCode) {
+    return c.json({ error: "purchase_code is required" }, 400);
+  }
+
+  const envato = new EnvatoService(c.env);
+  const result = await envato.verifyPurchaseCode(purchaseCode);
+
+  if (!result.valid || !result.purchase) {
+    return c.json({ error: result.error || "Invalid purchase code" }, 400);
+  }
+
+  return c.json({
+    purchase: {
+      purchase_code: purchaseCode,
+      license_type: result.purchase.license,
+      item_name: result.purchase.item?.name || null,
+      purchase_date: result.purchase.sold_at,
+      support_until: result.purchase.supported_until || null,
+      buyer: result.purchase.buyer || null,
+    },
+  });
+});
+
+// Contact detail: contact + purchases + their tickets
+adminRoutes.get("/contacts/:id", async (c) => {
+  const db = c.env.DB;
+  const id = parseInt(c.req.param("id"), 10);
+  if (Number.isNaN(id)) {
+    return c.json({ error: "Invalid contact id" }, 400);
+  }
+
+  const contactService = new ContactService(db);
+  const contact = await contactService.getContactDetail(id);
+  if (!contact) {
+    return c.json({ error: "Contact not found" }, 404);
+  }
+
+  return c.json({ contact });
+});
+
+// Add a purchase code to a contact (promotes lead -> customer)
+adminRoutes.post("/contacts/:id/purchases", async (c) => {
+  const db = c.env.DB;
+  const id = parseInt(c.req.param("id"), 10);
+  const body = await c.req.json<{
+    purchase_code?: string;
+    license_type?: string;
+    item_name?: string | null;
+    purchase_date?: string | null;
+    support_until?: string | null;
+    support_term_months?: number | null;
+    source?: string;
+  }>();
+
+  if (Number.isNaN(id)) {
+    return c.json({ error: "Invalid contact id" }, 400);
+  }
+  if (!body.purchase_code?.trim()) {
+    return c.json({ error: "purchase_code is required" }, 400);
+  }
+
+  const contactService = new ContactService(db);
+  try {
+    const purchase = await contactService.addPurchase(id, {
+      purchase_code: body.purchase_code,
+      license_type: (body.license_type as "regular" | "extended") || "regular",
+      item_name: body.item_name ?? null,
+      purchase_date: body.purchase_date || null,
+      support_until: body.support_until || null,
+      support_term_months: body.support_term_months || null,
+      source: (body.source === "envato" ? "envato" : "manual") as "envato" | "manual",
+    });
+    return c.json({ purchase, contactType: "customer" }, 201);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Failed to add purchase" }, 400);
+  }
+});
+
+// Update a purchase (license type, support period, dates)
+adminRoutes.patch("/contacts/:id/purchases/:purchaseId", async (c) => {
+  const db = c.env.DB;
+  const purchaseId = parseInt(c.req.param("purchaseId"), 10);
+  const body = await c.req.json<{
+    license_type?: string;
+    item_name?: string | null;
+    purchase_date?: string | null;
+    support_until?: string | null;
+    support_term_months?: number | null;
+  }>();
+
+  if (Number.isNaN(purchaseId)) {
+    return c.json({ error: "Invalid purchase id" }, 400);
+  }
+
+  const contactService = new ContactService(db);
+  try {
+    const purchase = await contactService.updatePurchase(purchaseId, {
+      license_type: body.license_type as "regular" | "extended" | undefined,
+      item_name: body.item_name,
+      purchase_date: body.purchase_date,
+      support_until: body.support_until,
+      support_term_months: body.support_term_months,
+    });
+    if (!purchase) {
+      return c.json({ error: "Purchase not found" }, 404);
+    }
+    return c.json({ purchase });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Failed to update purchase" }, 400);
+  }
+});
+
+// Remove a purchase code (reverts contact to lead if no purchases remain)
+adminRoutes.delete("/contacts/:id/purchases/:purchaseId", async (c) => {
+  const db = c.env.DB;
+  const purchaseId = parseInt(c.req.param("purchaseId"), 10);
+  if (Number.isNaN(purchaseId)) {
+    return c.json({ error: "Invalid purchase id" }, 400);
+  }
+
+  const contactService = new ContactService(db);
+  const result = await contactService.deletePurchase(purchaseId);
+  if (!result.purchaseDeleted) {
+    return c.json({ error: "Purchase not found" }, 404);
+  }
+  return c.json({ success: true, contactType: result.contactType });
+});
+
+// Update contact name
+adminRoutes.patch("/contacts/:id", async (c) => {
+  const db = c.env.DB;
+  const id = parseInt(c.req.param("id"), 10);
+  const body = await c.req.json<{ name?: string; notes?: string }>();
+
+  if (Number.isNaN(id)) {
+    return c.json({ error: "Invalid contact id" }, 400);
+  }
+
+  const contactService = new ContactService(db);
+  if (body.name !== undefined) {
+    await contactService.updateContactName(id, body.name);
+  }
+  if (body.notes !== undefined) {
+    await contactService.updateContactNotes(id, body.notes);
+  }
+  return c.json({ success: true });
+});
+
+// ============================================
 // Ticket Support System
 // ============================================
 
@@ -668,12 +846,36 @@ adminRoutes.get("/tickets/:ticketNumber", async (c) => {
   const mergedIntoTicket = await ticketService.getMergedIntoTicket(ticket.id);
   const mergedSources = await ticketService.getMergedSources(ticket.id);
 
+  // Contact/badge info for the ticket owner (Lead vs Customer + support status)
+  let contact = null;
+  if (ticket.contact_id) {
+    const contactService = new ContactService(db);
+    contact = await contactService.getContactDetail(ticket.contact_id);
+  } else if (ticket.from_email) {
+    const contactService = new ContactService(db);
+    const byEmail = await contactService.getContactByEmail(ticket.from_email);
+    if (byEmail) contact = await contactService.getContactDetail(byEmail.id);
+  }
+
   return c.json({
     ticket,
     messages: messagesWithAttachments,
     participants,
     merged_into_ticket: mergedIntoTicket,
     merged_sources: mergedSources,
+    contact: contact
+      ? {
+          id: contact.id,
+          email: contact.email,
+          name: contact.name,
+          type: contact.type,
+          support_status: contact.support_status,
+          latest_purchase_code: contact.latest_purchase_code,
+          latest_license_type: contact.latest_license_type,
+          latest_support_until: contact.latest_support_until,
+          purchases: contact.purchases,
+        }
+      : null,
   });
 });
 
@@ -897,9 +1099,13 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   const fromName = env.TICKET_FROM_NAME || "Chatloka Support";
   const fromEmail = env.TICKET_FROM_EMAIL || "contact@support.chatloka.net";
   const from = `${fromName} <${fromEmail}>`;
-  const participants = (await ticketService.getParticipants(ticket.id)).filter(
-    (email) => email.toLowerCase() !== ticket.from_email.toLowerCase()
-  );
+  const participants = (await ticketService.getParticipants(ticket.id)).filter((email) => {
+    const normalized = email.toLowerCase();
+    // Never CC the support inbox or the ticket owner themselves: CC'ing the
+    // support inbox wastes outbound quota and echoes the reply back as a
+    // webhook event, and CC'ing the owner just re-sends what they wrote.
+    return normalized !== ticket.from_email.toLowerCase() && normalized !== fromEmail.toLowerCase();
+  });
   const result = await resendService.sendEmail({
     from,
     to: [ticket.from_email],

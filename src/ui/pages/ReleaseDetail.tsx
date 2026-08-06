@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
+import { parseDbDate } from "@/lib/dates"
 import { useParams, useNavigate } from "react-router-dom"
 import {
   Card,
@@ -46,7 +47,7 @@ function formatFileSize(bytes: number | null): string {
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—"
-  const d = new Date(value)
+  const d = parseDbDate(value)
   if (Number.isNaN(d.getTime())) return value
   return d.toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",

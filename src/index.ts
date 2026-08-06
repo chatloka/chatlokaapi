@@ -8,6 +8,7 @@ import { AppUpdateService } from './services/appUpdate'
 import { ResendService } from './services/resend'
 import { TicketService } from './services/ticket'
 import type { Ticket } from './services/ticket'
+import { ContactService } from './services/contact'
 import { NotificationService } from './services/notification'
 import { requireValidLicense, type LicenseContextVariables } from './middleware/requireValidLicense'
 import { getClientIp } from './http'
@@ -1087,6 +1088,15 @@ app.post('/api/webhooks/resend', async (c) => {
       .map((e: string) => e.trim().toLowerCase())
     const senderEmail = (event.data.from || '').trim().toLowerCase()
 
+    // Echo guard: emails sent FROM the support inbox itself (e.g. a copy of an
+    // admin reply that Resend echoes back to the routing domain) must not be
+    // ingested as a new customer message / ticket - that would duplicate the
+    // support staff's own messages in the thread.
+    if (senderEmail === supportInbox) {
+      console.error(`[Resend Webhook] Ignoring echo from support inbox (${senderEmail})`)
+      return c.json({ received: true })
+    }
+
     // Display name comes from the original From: header on the retrieve endpoint
     // (the webhook's data.from is the bare email address only).
     const senderName = parseDisplayName(email.headers?.from || email.headers?.['From'])
@@ -1152,6 +1162,19 @@ app.post('/api/webhooks/resend', async (c) => {
         subject: event.data.subject,
       })
       isNewTicket = true
+    }
+
+    // Upsert a contact record for the sender, linking the ticket to it so the
+    // admin UI can show Lead/Customer + support status badges.
+    try {
+      const contactService = new ContactService(db)
+      const contact = await contactService.upsertContactFromEmail(event.data.from, senderName)
+      if (!ticket.contact_id) {
+        await ticketService.updateTicket(ticket.ticket_number, { contact_id: contact.id })
+        ticket.contact_id = contact.id
+      }
+    } catch (contactErr) {
+      console.error('[Resend Webhook] Failed to upsert contact:', contactErr)
     }
 
     // Register this email's participants (sender + To/Cc/Bcc recipients)
