@@ -44,7 +44,10 @@ app.use('/api/*', async (c, next) => {
   const method = c.req.method
   const endpoint = new URL(c.req.url).pathname
 
-  // Try to extract purchase_code and domain from body
+  // Try to extract purchase_code and domain from body. Some endpoints (e.g.
+  // /api/app/check-update, /api/plugins/download-token) send the purchase code
+  // via the X-License-Key header and keep the body free of it, so fall back to
+  // the header to keep the Purchase Code column populated.
   let purchaseCode: string | null = null
   let domain: string | null = null
   let requestBodySize: number | null = null
@@ -53,12 +56,14 @@ app.use('/api/*', async (c, next) => {
     try {
       const cloned = c.req.raw.clone()
       const body = await cloned.json() as Record<string, unknown>
-      purchaseCode = (body.purchase_code as string) || null
+      purchaseCode = (body.purchase_code as string) || (c.req.header('x-license-key') as string | undefined) || null
       domain = (body.domain as string) || null
       requestBodySize = JSON.stringify(body).length
     } catch {
       // Body might not be JSON, that's fine
     }
+  } else {
+    purchaseCode = c.req.header('x-license-key') || null
   }
 
   let statusCode = 500
