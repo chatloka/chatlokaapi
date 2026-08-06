@@ -48,6 +48,7 @@ interface Ticket {
   purchase_code: string | null
   domain: string | null
   from_email: string
+  from_name?: string | null
   subject: string
   status: string
   priority: string
@@ -396,7 +397,11 @@ export function Tickets() {
                     <div className="mt-1 flex items-center justify-between gap-2">
                       <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                         <IconUser className="h-3 w-3 shrink-0 text-primary" />
-                        <span className="truncate">{ticket.from_email}</span>
+                        <span className="truncate">
+                          {ticket.from_name
+                            ? `${ticket.from_name} <${ticket.from_email}>`
+                            : ticket.from_email}
+                        </span>
                       </span>
                       <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                         <IconMessageCircle className="h-3 w-3" />
@@ -442,7 +447,9 @@ export function Tickets() {
                             <IconUser className="h-3 w-3 text-primary" />
                           </div>
                           <span className="text-sm truncate max-w-[200px]">
-                            {ticket.from_email}
+                            {ticket.from_name
+                              ? `${ticket.from_name} <${ticket.from_email}>`
+                              : ticket.from_email}
                           </span>
                         </div>
                       </TableCell>

@@ -6,6 +6,7 @@ export interface Ticket {
   purchase_code: string | null
   domain: string | null
   from_email: string
+  from_name?: string | null
   subject: string
   status: string
   priority: string
@@ -292,6 +293,7 @@ export class TicketService {
   async createTicket(data: {
     ticket_number: string
     from_email: string
+    from_name?: string | null
     subject: string
     purchase_code?: string
     domain?: string
@@ -299,10 +301,11 @@ export class TicketService {
     const now = new Date().toISOString()
     await run(
       this.db,
-      `INSERT INTO tickets (ticket_number, from_email, subject, purchase_code, domain, last_message_at, message_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      `INSERT INTO tickets (ticket_number, from_email, from_name, subject, purchase_code, domain, last_message_at, message_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       data.ticket_number,
       data.from_email,
+      data.from_name || null,
       data.subject,
       data.purchase_code || null,
       data.domain || null,

@@ -150,3 +150,31 @@
   scrollbar-width: thin;
   scrollbar-color: oklch(1 0 0 / 20%) transparent;
 }
+
+/* ============================================================
+   Smart rendering for automated email bodies
+   Auto-ack templates use light inline styles (they are sent to
+   customers' email clients which expect light mode). When these
+   bodies are rendered inside the dark admin UI, force a dark
+   palette so text stays readable and light cards don't glare.
+   Scoped to .msg-auto-body — regular messages are untouched.
+   ============================================================ */
+.msg-auto-body,
+.msg-auto-body * {
+  color: oklch(0.87 0.005 250) !important;
+  background-color: transparent !important;
+  border-color: oklch(1 0 0 / 14%) !important;
+}
+.msg-auto-body {
+  max-width: none !important;
+}
+.msg-auto-body > div {
+  max-width: none !important;
+  margin: 0 !important;
+}
+.msg-auto-body div[style*="background"] {
+  background-color: oklch(1 0 0 / 6%) !important;
+}
+.msg-auto-body div[style*="border-left"] {
+  border-left-color: oklch(0.68 0.17 260) !important;
+}

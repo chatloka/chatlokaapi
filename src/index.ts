@@ -831,12 +831,60 @@ app.post('/api/app/update-result', requireValidLicense, async (c) => {
 // Resend Webhook Handler (Ticket System)
 // ============================================
 
+/** Escape HTML so user-provided content (name, message preview) renders safely. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/** Strip HTML tags and collapse whitespace to produce a safe plain-text preview. */
+function stripHtml(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+}
+
+/**
+ * Extract a display name from an RFC 5322 From header.
+ * Handles "Name <email>", "Name" <email>, <email> and bare email forms.
+ * For bare addresses without a display name it returns null.
+ */
+function parseDisplayName(fromHeader: string | undefined | null): string | null {
+  if (!fromHeader) return null
+  const value = fromHeader.trim()
+  if (!value) return null
+
+  const match = value.match(/^(?:"([^"]*)"|([^<]*?))\s*<[^>]+>/)
+  if (!match) return null
+  const name = (match[1] || match[2] || '').trim()
+  return name || null
+}
+
+/** Build a short, safe preview of the customer's message for the ack email. */
+function buildMessagePreview(text: string | null, html: string | null, maxLength = 280): string {
+  const plain = (text || stripHtml(html || '') || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return plain.slice(0, maxLength) + (plain.length > maxLength ? '…' : '')
+}
+
 async function sendTicketAcknowledgement(
   env: CloudflareBindings,
   ticketService: TicketService,
   ticket: Ticket,
   customerEmail: string,
+  customerName: string | null,
   originalSubject: string,
+  messagePreview: string,
   resendService: ResendService,
   reopened = false,
 ): Promise<void> {
@@ -849,11 +897,17 @@ async function sendTicketAcknowledgement(
     ? `[${ticketNumber}] ${originalSubject} has been reopened`
     : `[${ticketNumber}] ${originalSubject} has been opened`
 
+  const greetingHtml = customerName ? `Dear ${escapeHtml(customerName)},` : 'Dear valued customer,'
+  const greetingText = customerName ? `Dear ${customerName},` : 'Dear valued customer,'
+  const previewHtml = messagePreview
+    ? escapeHtml(messagePreview).replace(/\n/g, '<br>')
+    : ''
+
   const ackHtml = reopened
     ? `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;">
       <h2 style="margin:0 0 16px;font-size:20px;">Your ticket has been re-opened</h2>
-      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">Dear valued customer,</p>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">${greetingHtml}</p>
       <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
         Thank you for reaching out again. Your support ticket has been successfully re-opened and is now being processed by our team.
       </p>
@@ -861,18 +915,26 @@ async function sendTicketAcknowledgement(
         <div style="font-size:12px;color:#6b7280;margin-bottom:4px;">Ticket ID</div>
         <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;font-weight:600;color:#111827;">${ticketNumber}</div>
       </div>
+      ${previewHtml ? `
+      <div style="margin:0 0 16px;padding:12px 16px;border-left:3px solid #93c5fd;background:#f9fafb;border-radius:0 8px 8px 0;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:#6b7280;margin-bottom:6px;">Your message</div>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#374151;">${previewHtml}</p>
+      </div>` : ''}
       <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
         A member of our support team will get in touch with you regarding this ticket shortly. No further action is required on your end at this time.
       </p>
+      <div style="margin:0 0 16px;padding:12px 16px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;font-size:13px;line-height:1.6;color:#374151;">
+        <strong>To reply to this ticket</strong>&nbsp;— simply reply to this email. Your message will be added to <strong>${ticketNumber}</strong> automatically; no need to start a new email.
+      </div>
       <p style="margin:0;font-size:14px;line-height:1.6;">Thank you for your patience and understanding.</p>
       <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
-        Chatloka Support &middot; support@chatloka.net
+        Chatloka Support &middot; ${fromEmail}
       </div>
     </div>`
     : `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;">
       <h2 style="margin:0 0 16px;font-size:20px;">Your message has been received</h2>
-      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">Dear valued customer,</p>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">${greetingHtml}</p>
       <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
         Thank you for contacting Chatloka Support. Your request has been received, and a support ticket has been created to track it.
       </p>
@@ -881,19 +943,27 @@ async function sendTicketAcknowledgement(
         <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;font-weight:600;color:#111827;">${ticketNumber}</div>
       </div>
       <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
-        Please keep this ticket ID for reference. When replying to this email, the ticket ID in the subject enables our team to route your messages to the correct ticket automatically.
+        Please keep this ticket ID for reference. When replying to this email, the ticket ID in the subject ensures your follow-ups are added to this ticket automatically.
       </p>
-      <p style="margin:0;font-size:14px;line-height:1.6;">
+      ${previewHtml ? `
+      <div style="margin:0 0 16px;padding:12px 16px;border-left:3px solid #93c5fd;background:#f9fafb;border-radius:0 8px 8px 0;">
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:#6b7280;margin-bottom:6px;">Your message</div>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#374151;">${previewHtml}</p>
+      </div>` : ''}
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
         A support representative will respond to your request as soon as possible. Thank you for your patience.
       </p>
+      <div style="margin:0 0 16px;padding:12px 16px;border:1px solid #e5e7eb;border-radius:8px;background:#f6fafb;font-size:13px;line-height:1.6;color:#374151;">
+        <strong>How to reply to this ticket</strong>&nbsp;— simply reply to this email. Your message will be included in <strong>${ticketNumber}</strong> automatically; no new email is needed.
+      </div>
       <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
-        Chatloka Support &middot; support@chatloka.net
+        Chatloka Support &middot; ${fromEmail}
       </div>
     </div>`
 
   const ackText = reopened
-    ? `Your ticket has been re-opened.\n\nDear valued customer,\n\nThank you for contacting Chatloka Support. Your support ticket ${ticketNumber} has been successfully reopened and is being processed by our team.\n\nA member of our support team will reach out to you shortly. No further action is required on your end at this time.\n\nThank you for your patience and understanding.\n\nChatloka Support`
-    : `Your message has been received.\n\nDear valued customer,\n\nThank you for contacting Chatloka Support. Your request has been received, and a support ticket has been created to track it.\n\nTicket ID: ${ticketNumber}\n\nPlease keep this ticket ID for reference.\n\nOur support team will respond to your request as soon as possible.\n\nChatloka Support`
+    ? `Your ticket has been re-opened.\n\n${greetingText}\n\nThank you for contacting Chatloka Support. Your support ticket ${ticketNumber} has been successfully reopened and is being processed by our team.\n\nTicket ID: ${ticketNumber}\n\nA member of our support team will reach out to you shortly. No further action is required on your end at this time.\n\nHow to reply: simply reply to this email — your message will be added to ${ticketNumber} automatically.\n\nThank you for your patience and understanding.\n\nChatloka Support`
+    : `Your message has been received.\n\n${greetingText}\n\nThank you for contacting Chatloka Support. Your request has been received, and a support ticket has been created to track it.\n\nTicket ID: ${ticketNumber}\n\nPlease keep this ticket ID for reference.\n\nHow to reply: simply reply to this email — your message will be added to ${ticketNumber} automatically; no new email is needed.\n\nOur support team will respond to your request as soon as possible.\n\nChatloka Support`
 
   const result = await resendService.sendEmail({
     from,
@@ -966,6 +1036,25 @@ app.post('/api/webhooks/resend', async (c) => {
       return c.json({ received: true })
     }
 
+    // IMPORTANT: Resend routes this domain with catch-all, so emails to any
+    // xxx@support.chatloka.net reach this webhook. Only process emails actually
+    // addressed to the support inbox (To/Cc/Bcc/received_for); everything else
+    // is acknowledged but ignored.
+    const supportInbox = (c.env.TICKET_FROM_EMAIL || 'contact@support.chatloka.net').trim().toLowerCase()
+    const eventRecipients = [
+      ...(Array.isArray(event.data.to) ? event.data.to : []),
+      ...(Array.isArray(event.data.cc) ? event.data.cc : []),
+      ...(Array.isArray(event.data.bcc) ? event.data.bcc : []),
+      ...(Array.isArray(event.data.received_for) ? event.data.received_for : []),
+    ]
+      .filter(Boolean)
+      .map((e: string) => e.trim().toLowerCase())
+
+    if (!eventRecipients.includes(supportInbox)) {
+      console.error(`[Resend Webhook] Ignoring email not addressed to ${supportInbox}`)
+      return c.json({ received: true })
+    }
+
     const db = c.env.DB
     const ticketService = new TicketService(db)
 
@@ -986,6 +1075,13 @@ app.post('/api/webhooks/resend', async (c) => {
       .filter(Boolean)
       .map((e: string) => e.trim().toLowerCase())
     const senderEmail = (event.data.from || '').trim().toLowerCase()
+
+    // Display name comes from the original From: header on the retrieve endpoint
+    // (the webhook's data.from is the bare email address only).
+    const senderName = parseDisplayName(email.headers?.from || email.headers?.['From'])
+
+    // Plain-text preview of the customer's first message, used in the ack email.
+    const messagePreview = buildMessagePreview(email.text || '', email.html || '')
 
     // An email is authorized to join a ticket if they are the ticket owner,
     // OR they have been a participant on the thread (was To/Cc/Bcc before).
@@ -1041,6 +1137,7 @@ app.post('/api/webhooks/resend', async (c) => {
       ticket = await ticketService.createTicket({
         ticket_number: ticketNumber,
         from_email: event.data.from,
+        from_name: senderName,
         subject: event.data.subject,
       })
       isNewTicket = true
@@ -1136,12 +1233,15 @@ app.post('/api/webhooks/resend', async (c) => {
     //  - Reopened ticket: confirm the ticket has been re-opened and will be attended
     if (event.data.from && (isNewTicket || wasReopened)) {
       try {
+        const nameForAck = ticket.from_name || senderName
         await sendTicketAcknowledgement(
           c.env,
           ticketService,
           ticket,
           event.data.from,
+          nameForAck,
           event.data.subject || '',
+          messagePreview,
           resendService,
           wasReopened,
         )

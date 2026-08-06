@@ -56,6 +56,7 @@ interface Ticket {
   purchase_code: string | null;
   domain: string | null;
   from_email: string;
+  from_name?: string | null;
   subject: string;
   status: string;
   priority: string;
@@ -227,6 +228,12 @@ function getPriorityBadge(priority: string): {
 
 function IconMinus({ size = 16 }: { size?: number }) {
   return <IconCircleDot size={size} />;
+}
+
+function formatSender(ticket: Ticket): string {
+  return ticket.from_name
+    ? `${ticket.from_name} <${ticket.from_email}>`
+    : ticket.from_email;
 }
 
 export function TicketDetail() {
@@ -576,7 +583,7 @@ export function TicketDetail() {
           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <IconUser size={14} />
-              <span>{ticket.from_email}</span>
+              <span>{formatSender(ticket)}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <IconClock size={14} />
@@ -671,7 +678,9 @@ export function TicketDetail() {
                   </div>
                   {msg.body_html ? (
                     <div
-                      className="prose prose-invert prose-sm max-w-none text-sm text-foreground/90"
+                      className={`prose prose-invert prose-sm max-w-none text-sm text-foreground/90 ${
+                        isAutomated ? "msg-auto-body" : ""
+                      }`}
                       dangerouslySetInnerHTML={{ __html: msg.body_html }}
                     />
                   ) : (
@@ -747,7 +756,7 @@ export function TicketDetail() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2 text-sm">
                     <IconMailForward size={16} />
-                    Reply to {ticket.from_email}
+                    Reply to {formatSender(ticket)}
                     {participants.length > 0 && (
                       <span className="text-xs font-normal text-muted-foreground">
                         (CC: {participants.length} participant
@@ -888,7 +897,7 @@ export function TicketDetail() {
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">From</span>
-                  <span className="text-foreground">{ticket.from_email}</span>
+                  <span className="text-foreground">{formatSender(ticket)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="flex items-center gap-1 text-muted-foreground">
