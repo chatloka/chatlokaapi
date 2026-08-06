@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   Card,
   CardContent,
@@ -6,21 +7,31 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  IconCopy,
-  IconCheck,
+  IconWorld,
+  IconKey,
+  IconServer,
+  IconChevronRight,
   IconTerminal,
   IconCode,
-  IconBrandVscode,
   IconBrandChrome,
-  IconServer,
-  IconKey,
-  IconWorld,
+  IconBrandVscode,
   IconPlug,
+  IconCopy,
+  IconCheck,
 } from "@tabler/icons-react"
+import { MCP_TOOLS, CATEGORY_COLORS, CATEGORY_ICONS, type ToolCategory } from "@/lib/mcpTools"
 
 const MCP_URL = "https://api.chatloka.net/mcp"
 
@@ -185,18 +196,54 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   )
 }
 
+const CATEGORIES: ToolCategory[] = [
+  "License",
+  "Plugins",
+  "Tickets",
+  "Contacts",
+  "Releases",
+  "Notifications",
+  "Monitoring",
+]
+
+function CategoryBadge({ category }: { category: ToolCategory }) {
+  return (
+    <Badge
+      variant="outline"
+      className={`gap-1 border ${CATEGORY_COLORS[category]} cursor-pointer`}
+    >
+      {CATEGORY_ICONS[category]}
+      {category}
+    </Badge>
+  )
+}
+
 export function Mcp() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState("opencode")
+  const [categoryFilter, setCategoryFilter] = useState<ToolCategory | "all">("all")
   const activeTool = tools.find((t) => t.id === activeTab) || tools[0]
   const configString = JSON.stringify(activeTool.config, null, 2)
 
+  const filteredTools =
+    categoryFilter === "all"
+      ? MCP_TOOLS
+      : MCP_TOOLS.filter((t) => t.category === categoryFilter)
+
+  const categoryCounts = CATEGORIES.reduce<Record<string, number>>((acc, cat) => {
+    acc[cat] = MCP_TOOLS.filter((t) => t.category === cat).length
+    return acc
+  }, {})
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">MCP Server</h1>
-        <p className="text-muted-foreground">
-          Connect AI assistants to your Chatloka license system via Model Context Protocol
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">MCP Server</h1>
+          <p className="text-muted-foreground">
+            Connect AI assistants to your Chatloka license system via Model Context Protocol
+          </p>
+        </div>
       </div>
 
       {/* Overview Cards */}
@@ -225,54 +272,106 @@ export function Mcp() {
             <IconServer className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <p className="text-sm">17 tools for license, plugin & log management</p>
+            <p className="text-sm font-semibold">{MCP_TOOLS.length} tools</p>
+            <p className="text-xs text-muted-foreground">
+              {CATEGORIES.length} categories — licenses, plugins, tickets, contacts, releases, notifications & monitoring
+            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Available Tools */}
+      {/* Category summary chips */}
+      <div className="flex flex-wrap gap-2">
+        <Badge
+          variant="outline"
+          className={`gap-1 cursor-pointer border ${
+            categoryFilter === "all"
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"
+          }`}
+          onClick={() => setCategoryFilter("all")}
+        >
+          <IconServer className="h-3.5 w-3.5" />
+          All ({MCP_TOOLS.length})
+        </Badge>
+        {CATEGORIES.map((cat) => (
+          <Badge
+            key={cat}
+            variant="outline"
+            className={`gap-1 cursor-pointer border ${
+              categoryFilter === cat
+                ? "bg-primary text-primary-foreground border-primary"
+                : CATEGORY_COLORS[cat]
+            }`}
+            onClick={() => setCategoryFilter(categoryFilter === cat ? "all" : cat)}
+          >
+            {CATEGORY_ICONS[cat]}
+            {cat} ({categoryCounts[cat]})
+          </Badge>
+        ))}
+      </div>
+
+      {/* Available Tools Table */}
       <Card>
         <CardHeader>
           <CardTitle>Available MCP Tools</CardTitle>
           <CardDescription>
-            These tools are available once connected
+            Click any tool to open its reference page with parameters & examples
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              { name: "get_licenses", desc: "List all licenses", group: "License" },
-              { name: "get_license", desc: "Get license by purchase code", group: "License" },
-              { name: "create_license", desc: "Create a new license", group: "License" },
-              { name: "update_license_status", desc: "Change license status", group: "License" },
-              { name: "update_license_domain", desc: "Change bound domain", group: "License" },
-              { name: "verify_purchase_code", desc: "Verify against Envato API", group: "License" },
-              { name: "get_license_features", desc: "Get feature list for type", group: "License" },
-              { name: "get_validation_logs", desc: "Validation history", group: "License" },
-              { name: "get_domain_history", desc: "Domain change history", group: "License" },
-              { name: "get_plugins", desc: "List all plugins", group: "Plugin" },
-              { name: "get_plugin_versions", desc: "All versions for a plugin", group: "Plugin" },
-              { name: "get_plugin_download_logs", desc: "Download history", group: "Plugin" },
-              { name: "generate_plugin_download_link", desc: "Generate download URL + token", group: "Plugin" },
-              { name: "get_api_logs", desc: "API logs with filtering", group: "Logs" },
-              { name: "get_tamper_logs", desc: "Tamper detection logs", group: "Logs" },
-              { name: "get_api_stats", desc: "24h API statistics", group: "Logs" },
-              { name: "get_dashboard_stats", desc: "Aggregate dashboard stats", group: "Logs" },
-            ].map((tool) => (
-              <div
-                key={tool.name}
-                className="flex flex-col gap-1 rounded-md border p-3"
-              >
-                <div className="flex items-center gap-2">
-                  <code className="text-xs font-mono font-bold">{tool.name}</code>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {tool.group}
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">{tool.desc}</p>
-              </div>
-            ))}
-          </div>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[300px]">Tool</TableHead>
+                <TableHead className="w-[140px]">Category</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="w-[60px] text-right">Params</TableHead>
+                <TableHead className="w-[40px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredTools.map((tool) => (
+                <TableRow
+                  key={tool.name}
+                  className="cursor-pointer group"
+                  onClick={() => navigate(`/manage/mcp/tools/${tool.name}`)}
+                >
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-foreground">
+                        {tool.icon}
+                      </div>
+                      <code className="text-sm font-mono font-bold group-hover:text-primary transition-colors">
+                        {tool.name}
+                      </code>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <CategoryBadge category={tool.category} />
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-sm text-muted-foreground line-clamp-1">
+                      {tool.short}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge
+                      variant="secondary"
+                      className={`text-[10px] ${
+                        tool.params.length > 0 ? "" : "opacity-60"
+                      }`}
+                    >
+                      {tool.params.length}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <IconChevronRight className="h-4 w-4 ml-auto text-muted-foreground group-hover:text-primary transition-colors" />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 

@@ -16,6 +16,7 @@ import { PluginDetail } from "./pages/PluginDetail"
 import { Logs } from "./pages/Logs"
 import { Profile } from "./pages/Profile"
 import { Mcp } from "./pages/Mcp"
+import { McpToolDetail } from "./pages/McpToolDetail"
 import { Releases } from "./pages/Releases"
 import { ReleaseDetail } from "./pages/ReleaseDetail"
 import { Users } from "./pages/Users"
@@ -57,6 +58,7 @@ const router = createBrowserRouter(
         <Route path="tickets/analytics" element={<TicketAnalyticsPage />} />
         <Route path="tickets/:ticketNumber" element={<TicketDetail />} />
         <Route path="mcp" element={<Mcp />} />
+        <Route path="mcp/tools/:toolName" element={<McpToolDetail />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="/" element={<Navigate to="/manage" replace />} />

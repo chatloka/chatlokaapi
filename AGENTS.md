@@ -107,7 +107,7 @@ chatlokaapi/
 │   │   ├── plugin.ts         # PluginService (D1 + R2)
 │   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens)
 │   ├── mcp/
-│   │   └── index.ts          # MCP server (17 tools, Streamable HTTP)
+│   │   └── index.ts          # MCP server (40 tools, Streamable HTTP)
 │   └── ui/
 │       ├── main.tsx           # React entry (BrowserRouter, Toaster)
 │       ├── App.tsx            # Routes definition
@@ -190,11 +190,11 @@ chatlokaapi/
 ### MCP (Bearer token required)
 | Method | Path | Description |
 |---|---|---|
-| ALL | `/mcp` | MCP Streamable HTTP endpoint (17 tools) |
+| ALL | `/mcp` | MCP Streamable HTTP endpoint (40 tools) |
 
 ---
 
-## MCP Tools (17 total)
+## MCP Tools (40 total)
 
 ### License Management
 - `get_licenses` — List all licenses
@@ -212,6 +212,37 @@ chatlokaapi/
 - `get_plugin_versions` — Version history for a plugin
 - `get_plugin_download_logs` — Download history
 - `generate_plugin_download_link` — Generate JWT download token (1hr, single-use)
+
+### Ticket Management (Support)
+- `get_tickets` — List tickets (status/search/sort/pagination + contact badges)
+- `get_ticket` — Full ticket detail (messages, attachments, participants, merge context, contact)
+- `get_ticket_attachments` — List all attachments across a ticket's messages
+- `reply_ticket` — Send email reply via Resend (threading headers, CC participants)
+- `update_ticket_status` — Change status (open/pending/closed)
+- `update_ticket_priority` — Change priority (low/medium/high)
+- `merge_tickets` — Merge tickets into target or new container ticket
+- `get_ticket_stats` — Total/open/pending/closed counts
+- `get_ticket_analytics` — First-response/avg-response, per-weekday/hour (WIB), slow gaps
+- `get_unread_tickets` — Unread inbox (customer messages not yet seen)
+- `mark_tickets_read` — Mark one ticket or all unread tickets read
+- `generate_attachment_download_link` — Generate 1hr single-use download link for a ticket attachment
+
+### Contact Management (Users)
+- `get_contacts` — List contacts (lead/customer, search, support status)
+- `get_contact` — Contact detail (purchases, support expiry, ticket history)
+- `add_contact_purchase` — Attach purchase code (+auto Envato verify), promote to customer
+- `update_contact_purchase` — Edit purchase (license type, support until, dates)
+- `remove_contact_purchase` — Remove purchase (demotes customer back to lead)
+- `update_contact` — Update contact name / admin notes
+
+### App Release Management
+- `get_app_versions` — List all Chatloka app release versions
+- `generate_release_download_link` — Generate 1hr single-use JWT download link for a release
+- `get_app_update_logs` — Client-side app update logs (success/failure per license)
+
+### Notifications
+- `get_notifications` — Admin notification feed + unread count
+- `mark_notifications_read` — Mark single or all notifications read
 
 ### Monitoring
 - `get_api_logs` — API request logs with filtering

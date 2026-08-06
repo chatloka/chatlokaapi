@@ -669,6 +669,57 @@ app.get('/downloads/:filename', async (c) => {
   }
 })
 
+// Ticket attachment download (token-gated, one-time)
+app.get('/downloads/attachments/:attachmentId', async (c) => {
+  const limited = await enforceRateLimit(c, c.env.RL_PLUGIN_DOWNLOAD, 'attachment-download')
+  if (limited) return limited
+
+  const attachmentId = parseInt(c.req.param('attachmentId'), 10)
+  if (Number.isNaN(attachmentId)) return c.json({ error: 'invalid_request', message: 'Invalid attachment id' }, 400)
+
+  const token = c.req.header('x-download-token')
+  if (!token) return c.json({ error: 'token_missing', message: 'Header X-Download-Token is required' }, 401)
+
+  let payload: Record<string, any>
+  try {
+    payload = await verifyHs256(token, c.env.DOWNLOAD_TOKEN_SECRET)
+  } catch (e: any) {
+    return c.json({ error: 'token_invalid', message: e?.message || 'Invalid or expired token' }, 401)
+  }
+
+  if (payload.type !== 'ticket-attachment') {
+    return c.json({ error: 'token_invalid', message: 'Invalid token type for attachment download' }, 401)
+  }
+  const validIssuers = ['api.chaton.pro', 'api.chatloka.net']
+  if (!validIssuers.includes(payload.iss)) return c.json({ error: 'token_invalid', message: 'Invalid token issuer' }, 401)
+
+  const db = c.env.DB
+  const ticketService = new TicketService(db)
+
+  const alreadyUsed = await ticketService.isAttachmentTokenUsed(payload.jti)
+  if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This download token has already been used' }, 401)
+
+  const attachment = await ticketService.getAttachmentById(attachmentId)
+  if (!attachment) return c.json({ error: 'attachment_not_found', message: 'Attachment not found' }, 404)
+  if (payload.attachmentId !== attachmentId) {
+    return c.json({ error: 'attachment_mismatch', message: 'Attachment does not match the download token' }, 403)
+  }
+
+  const object = await c.env.PLUGINS_BUCKET.get(attachment.r2_path)
+  if (!object || !object.body) return c.json({ error: 'file_not_found', message: `Attachment '${attachment.filename}' is not available on server` }, 404)
+
+  await ticketService.markAttachmentTokenAsUsed(payload.jti, new Date(payload.exp * 1000))
+
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      'Content-Type': attachment.content_type,
+      'Content-Disposition': `attachment; filename="${attachment.filename}"`,
+      ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
+    },
+  })
+})
+
 // ============================================
 // App Update System (Public API)
 // ============================================

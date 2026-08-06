@@ -496,6 +496,17 @@ export class TicketService {
     return first<TicketAttachment>(this.db, 'SELECT * FROM ticket_attachments WHERE id = ? LIMIT 1', id)
   }
 
+  /** Whether a one-time attachment download token (jti) has already been used. */
+  async isAttachmentTokenUsed(jti: string): Promise<boolean> {
+    const row = await first<{ jti: string }>(this.db, 'SELECT jti FROM used_tokens WHERE jti = ? LIMIT 1', jti)
+    return row !== null
+  }
+
+  /** Mark a one-time attachment download token (jti) as used. */
+  async markAttachmentTokenAsUsed(jti: string, expiresAt: Date): Promise<void> {
+    await run(this.db, 'INSERT INTO used_tokens (jti, expires_at) VALUES (?, ?)', jti, expiresAt.toISOString())
+  }
+
   async getAllReferences(ticketId: number): Promise<string[]> {
     const result = await this.db.prepare(
       'SELECT message_id FROM ticket_email_threads WHERE ticket_id = ? ORDER BY created_at ASC'
