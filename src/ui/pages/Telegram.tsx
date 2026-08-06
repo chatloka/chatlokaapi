@@ -31,7 +31,6 @@ import {
   IconChevronRight,
   IconCheck,
   IconAlertCircle,
-  IconWebhook,
   IconSend,
   IconRobot,
 } from "@tabler/icons-react"
@@ -57,7 +56,6 @@ interface Overview {
     botErrors: number
     activeChatStates: number
   }
-  providers: Array<{ provider: string; total: number; last_event: string | null }>
   actions: Array<{ action: string; total: number }>
 }
 
@@ -269,20 +267,6 @@ export function Telegram() {
                 </CardContent>
               </Card>
             </div>
-
-            {overview.providers.length > 0 && (
-              <div className="mt-6">
-                <p className="mb-2 text-sm font-medium">Webhook events by provider</p>
-                <div className="flex flex-wrap gap-2">
-                  {overview.providers.map((p) => (
-                    <Badge key={p.provider} variant="outline" className="cursor-default">
-                      <IconWebhook className="mr-1 h-3 w-3" />
-                      {p.provider} · {p.total}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
       )}

@@ -1069,6 +1069,7 @@ async function sendTicketAcknowledgement(
 }
 
 app.post('/api/webhooks/telegram', async (c) => {
+  const start = Date.now()
   const raw = await c.req.text()
   const secret = c.req.header('X-Telegram-Bot-Api-Secret-Token') || ''
   const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
@@ -1103,6 +1104,7 @@ app.post('/api/webhooks/telegram', async (c) => {
       raw_payload: raw,
       handled: 0,
       error_message: 'invalid_secret',
+      duration_ms: Date.now() - start,
     })
     return c.json({ ok: false, error: 'Invalid secret token' }, 401)
   }
@@ -1117,6 +1119,7 @@ app.post('/api/webhooks/telegram', async (c) => {
       raw_payload: raw,
       handled: 0,
       error_message: 'invalid_json',
+      duration_ms: Date.now() - start,
     })
     return c.json({ ok: false, error: 'Invalid JSON' }, 400)
   }
@@ -1141,6 +1144,7 @@ app.post('/api/webhooks/telegram', async (c) => {
     raw_payload: raw,
     handled,
     error_message: errorMessage,
+    duration_ms: Date.now() - start,
   })
 
   // Always 200 to prevent Telegram from retrying.
@@ -1156,11 +1160,12 @@ async function logWebhook(db: D1Database, entry: {
   raw_payload: string
   handled: number
   error_message?: string | null
+  duration_ms?: number
 }): Promise<void> {
   try {
     await db.prepare(
-      `INSERT INTO webhook_logs (provider, event_type, telegram_update_id, chat_id, source_ip, raw_payload, handled, error_message)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO webhook_logs (provider, event_type, telegram_update_id, chat_id, source_ip, raw_payload, handled, error_message, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       entry.provider,
       entry.event_type || null,
@@ -1170,6 +1175,7 @@ async function logWebhook(db: D1Database, entry: {
       entry.raw_payload,
       entry.handled,
       entry.error_message || null,
+      entry.duration_ms ?? null,
     ).run()
   } catch (err) {
     console.error('[Webhook Log] Failed to write:', err)
@@ -1177,8 +1183,10 @@ async function logWebhook(db: D1Database, entry: {
 }
 
 app.post('/api/webhooks/resend', async (c) => {
+  const start = Date.now()
+  let payload = ''
   try {
-    const payload = await c.req.text()
+    payload = await c.req.text()
     const svixId = c.req.header('svix-id') || ''
     const svixTimestamp = c.req.header('svix-timestamp') || ''
     const svixSignature = c.req.header('svix-signature') || ''
@@ -1203,6 +1211,7 @@ app.post('/api/webhooks/resend', async (c) => {
         raw_payload: payload,
         handled: 0,
         error_message: 'invalid_signature',
+        duration_ms: Date.now() - start,
       })
       return c.json({ error: 'Invalid signature' }, 401)
     }
@@ -1217,6 +1226,7 @@ app.post('/api/webhooks/resend', async (c) => {
         source_ip: c.req.header('cf-connecting-ip') || 'unknown',
         raw_payload: payload,
         handled: 1,
+        duration_ms: Date.now() - start,
       })
       return c.json({ received: true })
     }
@@ -1244,6 +1254,7 @@ app.post('/api/webhooks/resend', async (c) => {
         raw_payload: payload,
         handled: 0,
         error_message: 'not_addressed_to_support',
+        duration_ms: Date.now() - start,
       })
       return c.json({ received: true })
     }
@@ -1282,6 +1293,7 @@ app.post('/api/webhooks/resend', async (c) => {
         raw_payload: payload,
         handled: 0,
         error_message: 'support_inbox_echo',
+        duration_ms: Date.now() - start,
       })
       return c.json({ received: true })
     }
@@ -1516,12 +1528,22 @@ app.post('/api/webhooks/resend', async (c) => {
       source_ip: c.req.header('cf-connecting-ip') || 'unknown',
       raw_payload: payload,
       handled: 1,
+      duration_ms: Date.now() - start,
     })
 
     return c.json({ received: true })
   } catch (err) {
     console.error('[Resend Webhook] Error:', err)
-    // Always return 200 to prevent Resend retries
+    // Log the failure (if we have the raw payload) then always 200 to prevent retries.
+    if (payload) {
+      await logWebhook(c.env.DB, {
+        provider: 'resend',
+        raw_payload: payload,
+        handled: 0,
+        error_message: err instanceof Error ? err.message : String(err),
+        duration_ms: Date.now() - start,
+      })
+    }
     return c.json({ received: true })
   }
 })

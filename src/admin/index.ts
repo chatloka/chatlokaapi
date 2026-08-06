@@ -1415,6 +1415,24 @@ adminRoutes.get("/logs/webhooks", async (c) => {
   });
 });
 
+adminRoutes.get("/logs/webhooks/:id", async (c) => {
+  const db = c.env.DB;
+  const id = parseInt(c.req.param("id") || "", 10);
+  if (!id || Number.isNaN(id)) {
+    return c.json({ error: { message: "Invalid webhook log id" } }, 400);
+  }
+
+  const result = await db.prepare(
+    "SELECT * FROM webhook_logs WHERE id = ? LIMIT 1"
+  ).bind(id).first();
+
+  if (!result) {
+    return c.json({ error: { message: "Webhook log not found" } }, 404);
+  }
+
+  return c.json(result);
+});
+
 adminRoutes.get("/telegram/bot-logs", async (c) => {
   const db = c.env.DB;
   const page = parseInt(c.req.query("page") || "1", 10);

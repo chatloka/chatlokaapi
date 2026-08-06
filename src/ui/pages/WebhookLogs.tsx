@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import { parseDbDate } from "@/lib/dates"
 import {
   Card,
@@ -31,6 +32,7 @@ import {
   IconChevronRight,
   IconBrandTelegram,
   IconMail,
+  IconExternalLink,
 } from "@tabler/icons-react"
 import { CardTableSkeleton } from "@/components/Skeletons"
 import { toast } from "sonner"
@@ -52,12 +54,45 @@ interface WebhookLog {
   raw_payload: string
   handled: number
   error_message: string | null
+  duration_ms: number | null
   created_at: string
 }
 
 interface WebhookLogsResponse {
   logs: WebhookLog[]
   pagination: Pagination
+}
+
+interface ResendMeta {
+  from: string | null
+  to: string[]
+  subject: string | null
+  email_id: string | null
+}
+
+function parseResendMeta(raw: string): ResendMeta | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      data?: {
+        from?: string
+        to?: unknown
+        subject?: string
+        email_id?: string
+      }
+    }
+    const data = parsed.data || {}
+    const to = Array.isArray(data.to)
+      ? data.to.filter((e): e is string => typeof e === "string")
+      : []
+    return {
+      from: typeof data.from === "string" ? data.from : null,
+      to,
+      subject: typeof data.subject === "string" ? data.subject : null,
+      email_id: typeof data.email_id === "string" ? data.email_id : null,
+    }
+  } catch {
+    return null
+  }
 }
 
 function toWIB(dateStr: string) {
@@ -73,7 +108,19 @@ function toWIB(dateStr: string) {
   })
 }
 
+function DurationBadge({ ms }: { ms: number | null }) {
+  if (ms === null) return <span className="text-muted-foreground">—</span>
+  const className =
+    ms < 500
+      ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/20"
+      : ms < 2000
+        ? "bg-amber-500/15 text-amber-500 border-amber-500/20"
+        : "bg-red-500/15 text-red-500 border-red-500/20"
+  return <Badge className={`${className} cursor-default`}>{ms} ms</Badge>
+}
+
 export function WebhookLogs() {
+  const navigate = useNavigate()
   const [logs, setLogs] = useState<WebhookLog[]>([])
   const [loading, setLoading] = useState(true)
   const [provider, setProvider] = useState("telegram")
@@ -118,6 +165,12 @@ export function WebhookLogs() {
     fetchLogs()
     toast.success("Webhook logs refreshed")
   }
+
+  function openDetail(id: number) {
+    navigate(`/manage/webhook-logs/${id}`)
+  }
+
+  const isTelegram = provider === "telegram"
 
   return (
     <div className="space-y-6">
@@ -177,47 +230,80 @@ export function WebhookLogs() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Time (WIB)</TableHead>
-                    <TableHead>Provider</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Update ID</TableHead>
-                    <TableHead>Chat ID</TableHead>
+                    {isTelegram ? (
+                      <>
+                        <TableHead>Event</TableHead>
+                        <TableHead>Update ID</TableHead>
+                        <TableHead>Chat ID</TableHead>
+                      </>
+                    ) : (
+                      <>
+                        <TableHead>From</TableHead>
+                        <TableHead>Subject</TableHead>
+                        <TableHead>Email ID</TableHead>
+                      </>
+                    )}
                     <TableHead>Source IP</TableHead>
+                    <TableHead>Duration</TableHead>
                     <TableHead>Handled</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {logs.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                         Belum ada webhook tercatat.
                       </TableCell>
                     </TableRow>
                   )}
-                  {logs.map((log) => (
-                    <TableRow key={log.id}>
-                      <TableCell className="whitespace-nowrap font-mono text-xs">
-                        {toWIB(log.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="cursor-default">
-                          {log.provider}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{log.event_type || "—"}</TableCell>
-                      <TableCell className="font-mono text-xs">{log.telegram_update_id ?? "—"}</TableCell>
-                      <TableCell className="font-mono text-xs">{log.chat_id ?? "—"}</TableCell>
-                      <TableCell className="font-mono text-xs">{log.source_ip || "—"}</TableCell>
-                      <TableCell>
-                        {log.handled === 1 ? (
-                          <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default">ok</Badge>
+                  {logs.map((log) => {
+                    const meta = log.provider === "resend" ? parseResendMeta(log.raw_payload) : null
+                    return (
+                      <TableRow
+                        key={log.id}
+                        onClick={() => openDetail(log.id)}
+                        className="cursor-pointer"
+                      >
+                        <TableCell className="whitespace-nowrap font-mono text-xs">
+                          {toWIB(log.created_at)}
+                        </TableCell>
+                        {isTelegram ? (
+                          <>
+                            <TableCell className="font-mono text-xs">{log.event_type || "—"}</TableCell>
+                            <TableCell className="font-mono text-xs">{log.telegram_update_id ?? "—"}</TableCell>
+                            <TableCell className="font-mono text-xs">{log.chat_id ?? "—"}</TableCell>
+                          </>
                         ) : (
-                          <Badge className="bg-red-500/15 text-red-500 border-red-500/20 cursor-default" title={log.error_message || ""}>
-                            failed
-                          </Badge>
+                          <>
+                            <TableCell className="max-w-[180px] truncate text-xs" title={meta?.from || ""}>
+                              {meta?.from || "—"}
+                            </TableCell>
+                            <TableCell className="max-w-[200px] truncate text-xs" title={meta?.subject || ""}>
+                              {meta?.subject || "—"}
+                            </TableCell>
+                            <TableCell className="max-w-[180px] truncate font-mono text-xs" title={meta?.email_id || ""}>
+                              {meta?.email_id || "—"}
+                            </TableCell>
+                          </>
                         )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        <TableCell className="font-mono text-xs">{log.source_ip || "—"}</TableCell>
+                        <TableCell><DurationBadge ms={log.duration_ms} /></TableCell>
+                        <TableCell>
+                          {log.handled === 1 ? (
+                            <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default">ok</Badge>
+                          ) : (
+                            <Badge className="bg-red-500/15 text-red-500 border-red-500/20 cursor-default" title={log.error_message || ""}>
+                              failed
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <IconExternalLink className="h-4 w-4 text-muted-foreground" />
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
