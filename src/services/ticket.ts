@@ -14,6 +14,8 @@ export interface Ticket {
   message_count: number
   first_response_at: string | null
   first_response_minutes: number | null
+  merged_into?: number | null
+  merged_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -71,11 +73,24 @@ export class TicketService {
     const countParams: unknown[] = []
 
     if (options?.status && options.status !== 'all') {
-      const clause = ' AND status = ?'
+      if (options.status === 'merged') {
+        const clause = ' AND status = ?'
+        query += clause
+        countQuery += clause
+        params.push('merged')
+        countParams.push('merged')
+      } else {
+        const clause = ' AND status = ?'
+        query += clause
+        countQuery += clause
+        params.push(options.status)
+        countParams.push(options.status)
+      }
+    } else {
+      // Default: hide already-merged tickets from the list.
+      const clause = " AND status != 'merged'"
       query += clause
       countQuery += clause
-      params.push(options.status)
-      countParams.push(options.status)
     }
 
     if (options?.search) {
@@ -174,6 +189,104 @@ export class TicketService {
       'SELECT 1 FROM ticket_participants WHERE ticket_id = ? AND email = ? LIMIT 1'
     ).bind(ticketId, normalized).first()
     return !!row
+  }
+
+  /** All registered participant emails of a ticket (excludes the owner). */
+  async getParticipants(ticketId: number): Promise<string[]> {
+    const result = await this.db.prepare(
+      'SELECT email FROM ticket_participants WHERE ticket_id = ? ORDER BY created_at ASC'
+    ).bind(ticketId).all()
+    return (result.results || []).map((r) => (r as { email: string }).email)
+  }
+
+  /** Tickets that were merged into the given (target) ticket. */
+  async getMergedSources(targetTicketId: number): Promise<Ticket[]> {
+    const result = await this.db.prepare(
+      'SELECT * FROM tickets WHERE merged_into = ? ORDER BY merged_at ASC'
+    ).bind(targetTicketId).all()
+    return (result.results || []) as unknown as Ticket[]
+  }
+
+  /** The target ticket a merged ticket points to, or null if not merged. */
+  async getMergedIntoTicket(ticketId: number): Promise<Ticket | null> {
+    const ticket = await this.getTicketById(ticketId)
+    if (!ticket?.merged_into) return null
+    return this.getTicketById(ticket.merged_into)
+  }
+
+  /**
+   * Merge source tickets into a target ticket.
+   * Moves messages, attachments, email threads, and participants to the target,
+   * registers each source owner as a participant (so replies CC them all),
+   * marks the sources as 'merged' (kept for audit, hidden from the list),
+   * and recomputes the target's message counters.
+   * Does NOT create the audit message — callers should do that afterwards
+   * so the automated "merged" message appears on top of the moved history.
+   */
+  async mergeTickets(
+    targetTicketId: number,
+    sourceTicketIds: number[],
+  ): Promise<{ movedMessages: number; mergedCount: number }> {
+    const target = await this.getTicketById(targetTicketId)
+    if (!target) throw new Error('Target ticket not found')
+    if (target.status === 'merged') throw new Error('Cannot merge into a ticket that has already been merged')
+
+    let movedMessages = 0
+    const merged = new Set<number>()
+
+    for (const sourceId of sourceTicketIds) {
+      if (sourceId === targetTicketId) continue
+      const source = await this.getTicketById(sourceId)
+      if (!source) throw new Error('Source ticket not found')
+      if (source.status === 'merged') {
+        throw new Error(`Ticket ${source.ticket_number} has already been merged`)
+      }
+      if (merged.has(source.id)) continue
+      merged.add(source.id)
+
+      // Move messages (and their attachments) to the target ticket
+      const msgResult = await this.db.prepare(
+        'UPDATE ticket_messages SET ticket_id = ? WHERE ticket_id = ?'
+      ).bind(targetTicketId, sourceId).run()
+      movedMessages += msgResult.meta?.changes ?? 0
+
+      await this.db.prepare(
+        'UPDATE ticket_attachments SET ticket_id = ? WHERE ticket_id = ?'
+      ).bind(targetTicketId, sourceId).run()
+
+      // Move email thread references so replies (In-Reply-To) route to the target
+      await this.db.prepare(
+        'UPDATE ticket_email_threads SET ticket_id = ? WHERE ticket_id = ?'
+      ).bind(targetTicketId, sourceId).run()
+
+      // Merge participants, then register the source owner as a participant too
+      await this.db.prepare(
+        'INSERT OR IGNORE INTO ticket_participants (ticket_id, email) SELECT ?, email FROM ticket_participants WHERE ticket_id = ?'
+      ).bind(targetTicketId, sourceId).run()
+      await this.db.prepare(
+        'DELETE FROM ticket_participants WHERE ticket_id = ?'
+      ).bind(sourceId).run()
+      await this.addParticipants(targetTicketId, [source.from_email])
+
+      // Mark source as merged (kept for audit)
+      await this.db.prepare(
+        `UPDATE tickets SET status = 'merged', merged_into = ?, merged_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
+      ).bind(targetTicketId, sourceId).run()
+    }
+
+    if (merged.size === 0) {
+      throw new Error('No valid source tickets to merge')
+    }
+
+    // Recompute target counters from the moved history
+    const agg = await this.db.prepare(
+      'SELECT COUNT(*) as cnt, MAX(created_at) as last FROM ticket_messages WHERE ticket_id = ?'
+    ).bind(targetTicketId).first() as { cnt: number; last: string | null } | undefined
+    await this.db.prepare(
+      `UPDATE tickets SET message_count = ?, last_message_at = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(agg?.cnt ?? 0, agg?.last ?? null, targetTicketId).run()
+
+    return { movedMessages, mergedCount: merged.size }
   }
 
   async createTicket(data: {

@@ -3,6 +3,8 @@ import type { CloudflareBindings } from '../types'
 export interface ResendEmailOptions {
   from: string
   to: string[]
+  cc?: string[]
+  bcc?: string[]
   subject: string
   html?: string
   text?: string
@@ -69,6 +71,8 @@ export class ResendService {
       subject: options.subject,
     }
 
+    if (options.cc && options.cc.length > 0) body.cc = options.cc
+    if (options.bcc && options.bcc.length > 0) body.bcc = options.bcc
     if (options.html) body.html = options.html
     if (options.text) body.text = options.text
     if (options.reply_to) body.reply_to = options.reply_to

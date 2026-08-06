@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CardTableSkeleton } from "@/components/Skeletons";
+import { MergeTicketDialog } from "@/components/MergeTicketDialog";
 import { toast } from "sonner";
 import {
   IconArrowLeft,
@@ -45,6 +46,8 @@ import {
   IconAt,
   IconLink,
   IconRobot,
+  IconGitMerge,
+  IconUsers,
 } from "@tabler/icons-react";
 
 interface Ticket {
@@ -59,6 +62,10 @@ interface Ticket {
   assigned_to: string | null;
   last_message_at: string | null;
   message_count: number;
+  first_response_at: string | null;
+  first_response_minutes: number | null;
+  merged_into?: number | null;
+  merged_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -160,6 +167,13 @@ function getStatusBadge(status: string): {
         icon: IconCircleCheck,
         label: "Closed",
       };
+    case "merged":
+      return {
+        variant: "secondary",
+        className: "bg-purple-500/15 text-purple-400 border-purple-500/30",
+        icon: IconGitMerge,
+        label: "Merged",
+      };
     default:
       return {
         variant: "secondary",
@@ -223,6 +237,10 @@ export function TicketDetail() {
 
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [messages, setMessages] = useState<TicketMessage[]>([]);
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [mergedIntoTicket, setMergedIntoTicket] = useState<Ticket | null>(null);
+  const [mergedSources, setMergedSources] = useState<Ticket[]>([]);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [replyOpen, setReplyOpen] = useState(false);
@@ -254,9 +272,15 @@ export function TicketDetail() {
       const data = (await res.json()) as {
         ticket: Ticket;
         messages: TicketMessage[];
+        participants?: string[];
+        merged_into_ticket?: Ticket | null;
+        merged_sources?: Ticket[];
       };
       setTicket(data.ticket);
       setMessages(data.messages || []);
+      setParticipants(data.participants || []);
+      setMergedIntoTicket(data.merged_into_ticket || null);
+      setMergedSources(data.merged_sources || []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load ticket");
@@ -315,6 +339,10 @@ export function TicketDetail() {
     } finally {
       setUpdatingPriority(false);
     }
+  };
+
+  const handleMerged = () => {
+    fetchTicket();
   };
 
   const handleSendReply = async () => {
@@ -475,6 +503,17 @@ export function TicketDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {ticket.status !== "merged" && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer"
+              onClick={() => setMergeOpen(true)}
+            >
+              <IconGitMerge size={14} className="mr-1" />
+              Merge
+            </Button>
+          )}
           <Badge
             variant={statusBadge.variant}
             className={`${statusBadge.className} gap-1 text-xs`}
@@ -491,6 +530,42 @@ export function TicketDetail() {
           </Badge>
         </div>
       </div>
+
+      {/* Merged-into banner */}
+      {ticket.status === "merged" && (
+        <Card className="border-purple-500/30 bg-purple-500/5">
+          <CardContent className="flex items-center gap-3 p-3 text-sm">
+            <IconGitMerge size={18} className="shrink-0 text-purple-400" />
+            <span className="text-foreground">
+              This ticket has been merged into{" "}
+              <button
+                type="button"
+                className="cursor-pointer font-mono text-blue-400 underline-offset-2 hover:underline"
+                onClick={() => navigate(`/manage/tickets/${mergedIntoTicket?.ticket_number}`)}
+              >
+                {mergedIntoTicket?.ticket_number || "another ticket"}
+              </button>
+              . Replies to this ticket are no longer processed here.
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Merged-into banner */}
+      {mergedSources.length > 0 && ticket.status !== "merged" && (
+        <Card className="border-purple-500/20 bg-purple-500/5">
+          <CardContent className="flex items-center gap-3 p-3 text-sm">
+            <IconGitMerge size={18} className="shrink-0 text-purple-400" />
+            <span className="text-foreground">
+              {mergedSources.length} ticket{mergedSources.length !== 1 ? "s" : ""} merged
+              into this one:{" "}
+              <span className="font-mono text-purple-400">
+                {mergedSources.map((s) => s.ticket_number).join(", ")}
+              </span>
+            </span>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Subject & metadata */}
       <Card>
@@ -656,7 +731,7 @@ export function TicketDetail() {
           </div>
 
           {/* Reply section */}
-          {!replyOpen && ticket.status !== "closed" && (
+          {!replyOpen && ticket.status !== "closed" && ticket.status !== "merged" && (
             <Button
               variant="outline"
               className="w-full cursor-pointer"
@@ -673,6 +748,12 @@ export function TicketDetail() {
                   <CardTitle className="flex items-center gap-2 text-sm">
                     <IconMailForward size={16} />
                     Reply to {ticket.from_email}
+                    {participants.length > 0 && (
+                      <span className="text-xs font-normal text-muted-foreground">
+                        (CC: {participants.length} participant
+                        {participants.length !== 1 ? "s" : ""})
+                      </span>
+                    )}
                   </CardTitle>
                   <Button
                     variant="ghost"
@@ -808,6 +889,15 @@ export function TicketDetail() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">From</span>
                   <span className="text-foreground">{ticket.from_email}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <IconUsers size={12} />
+                    Participants
+                  </span>
+                  <span className="text-foreground">
+                    {participants.length > 0 ? participants.join(", ") : "—"}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Created</span>
@@ -947,6 +1037,16 @@ export function TicketDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Merge tickets dialog */}
+      {ticket.status !== "merged" && ticketNumber && (
+        <MergeTicketDialog
+          open={mergeOpen}
+          onOpenChange={setMergeOpen}
+          currentTicketNumber={ticketNumber}
+          onMerged={handleMerged}
+        />
+      )}
     </div>
   );
 }

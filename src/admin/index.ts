@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createAuth } from "../auth";
 import { AppUpdateService } from "../services/appUpdate";
-import { TicketService } from "../services/ticket";
+import { TicketService, type Ticket } from "../services/ticket";
 import { NotificationService } from "../services/notification";
 import { ResendService } from "../services/resend";
 import { broadcastRealtime } from "../realtime/hub";
@@ -653,10 +653,108 @@ adminRoutes.get("/tickets/:ticketNumber", async (c) => {
     })
   );
 
+  // Participants + merge context (so the UI can show who gets CC'd and banners)
+  const participants = await ticketService.getParticipants(ticket.id);
+  const mergedIntoTicket = await ticketService.getMergedIntoTicket(ticket.id);
+  const mergedSources = await ticketService.getMergedSources(ticket.id);
+
   return c.json({
     ticket,
     messages: messagesWithAttachments,
+    participants,
+    merged_into_ticket: mergedIntoTicket,
+    merged_sources: mergedSources,
   });
+});
+
+// Merge tickets: move source tickets into a target ticket (by number) or into
+// a freshly created ticket. Sources are marked 'merged' and their owners are
+// added as participants so replies are CC'd to everyone.
+adminRoutes.post("/tickets/merge", async (c) => {
+  const db = c.env.DB;
+  const body = await c.req.json<{
+    target_ticket_number?: string;
+    source_ticket_numbers: string[];
+    new_ticket_subject?: string;
+  }>();
+
+  const sourceNumbers = (body.source_ticket_numbers || [])
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sourceNumbers.length === 0) {
+    return c.json({ error: { message: "Select at least one ticket to merge" } }, 400);
+  }
+
+  const ticketService = new TicketService(db);
+
+  // Resolve target: existing ticket number OR create a new container ticket.
+  let target: Ticket;
+  const wantedTarget = body.target_ticket_number?.trim();
+  if (wantedTarget) {
+    const found = await ticketService.getTicketByNumber(wantedTarget);
+    if (!found) {
+      return c.json({ error: { message: "Target ticket not found" } }, 404);
+    }
+    if (found.status === "merged") {
+      return c.json({ error: { message: "Cannot merge into an already-merged ticket" } }, 400);
+    }
+    target = found;
+  } else {
+    // New container ticket seeded from the first source ticket.
+    const firstSource = await ticketService.getTicketByNumber(sourceNumbers[0]);
+    if (!firstSource) {
+      return c.json({ error: { message: "Source ticket not found" } }, 404);
+    }
+    const ticketNumber = await ticketService.generateTicketNumber();
+    target = await ticketService.createTicket({
+      ticket_number: ticketNumber,
+      from_email: firstSource.from_email,
+      subject: body.new_ticket_subject?.trim() || firstSource.subject,
+    });
+  }
+
+  // Resolve source tickets (must exist and not already be merged / the target)
+  const sourceTicketIds: number[] = [];
+  for (const num of sourceNumbers) {
+    const t = await ticketService.getTicketByNumber(num);
+    if (!t) {
+      return c.json({ error: { message: `Ticket ${num} not found` } }, 404);
+    }
+    sourceTicketIds.push(t.id);
+  }
+
+  try {
+    const { movedMessages, mergedCount } = await ticketService.mergeTickets(target.id, sourceTicketIds);
+
+    // Audit trail: automated message in the target noting each merged ticket
+    for (const num of sourceNumbers) {
+      const source = await ticketService.getTicketByNumber(num);
+      if (!source) continue;
+      const noteHtml = `<p>This ticket was merged into <strong>${target.ticket_number}</strong> — <code>${source.ticket_number}</code> (${source.from_email}) was combined into this conversation.</p>`;
+      await ticketService.createMessage({
+        ticket_id: target.id,
+        direction: "outbound",
+        from_email: "system",
+        to_email: target.from_email,
+        subject: `Merged ticket ${source.ticket_number}`,
+        body_html: noteHtml,
+        body_text: `Merged ticket ${source.ticket_number} into ${target.ticket_number}.`,
+        is_automated: 1,
+      });
+    }
+
+    return c.json({
+      success: true,
+      target_ticket_number: target.ticket_number,
+      merged_count: mergedCount,
+      moved_messages: movedMessages,
+    });
+  } catch (err) {
+    return c.json(
+      { error: { message: err instanceof Error ? err.message : "Merge failed" } },
+      400
+    );
+  }
 });
 
 // Reply to ticket (multipart: body_html, body_text, files[])
@@ -784,13 +882,18 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   }
 
   // Send email via Resend (with attachments as base64)
+  // To primary owner + CC all participants (merged tickets broadcast to everyone)
   const resendService = new ResendService(env);
   const fromName = env.TICKET_FROM_NAME || "Chatloka Support";
   const fromEmail = env.TICKET_FROM_EMAIL || "contact@support.chatloka.net";
   const from = `${fromName} <${fromEmail}>`;
+  const participants = (await ticketService.getParticipants(ticket.id)).filter(
+    (email) => email.toLowerCase() !== ticket.from_email.toLowerCase()
+  );
   const result = await resendService.sendEmail({
     from,
     to: [ticket.from_email],
+    cc: participants.length > 0 ? participants : undefined,
     subject: `Re: [${ticket.ticket_number}] ${ticket.subject}`,
     html: bodyHtml,
     text: bodyText,

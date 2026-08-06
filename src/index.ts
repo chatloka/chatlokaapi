@@ -1024,7 +1024,13 @@ app.post('/api/webhooks/resend', async (c) => {
       }
     }
 
-    // 3. Fallback: customer has an open ticket open — keep appending to it
+    // 3. If the matched ticket has been merged, follow it to the primary ticket
+    if (ticket && ticket.status === 'merged' && ticket.merged_into) {
+      const primary = await ticketService.getTicketById(ticket.merged_into)
+      if (primary) ticket = primary
+    }
+
+    // 4. Fallback: customer has an open ticket open — keep appending to it
     if (!ticket) {
       ticket = await ticketService.findOpenTicketBySender(event.data.from)
     }
