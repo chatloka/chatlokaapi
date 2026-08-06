@@ -16,6 +16,8 @@ import { PluginDetail } from "./pages/PluginDetail"
 import { Logs } from "./pages/Logs"
 import { Profile } from "./pages/Profile"
 import { Mcp } from "./pages/Mcp"
+import { Releases } from "./pages/Releases"
+import { ReleaseDetail } from "./pages/ReleaseDetail"
 import { Tickets } from "./pages/Tickets"
 import { TicketDetail } from "./pages/TicketDetail"
 import { TicketAnalyticsPage } from "./pages/TicketAnalytics"
@@ -42,6 +44,8 @@ const router = createBrowserRouter(
       >
         <Route index element={<Dashboard />} />
         <Route path="licenses" element={<Licenses />} />
+        <Route path="releases" element={<Releases />} />
+        <Route path="releases/:version" element={<ReleaseDetail />} />
         <Route path="plugins" element={<Plugins />} />
         <Route path="plugins/:slug" element={<PluginDetail />} />
         <Route path="logs" element={<Logs />} />

@@ -47,19 +47,25 @@ adminRoutes.use("*", async (c, next) => {
 adminRoutes.get("/stats", async (c) => {
   const db = c.env.DB;
 
-  const [licensesResult, pluginsResult, tamperResult, recentLicenses, latestTamper, apiStats] = await db.batch([
+  const [licensesResult, pluginsResult, tamperResult, recentLicenses, latestTamper, apiStats, licenseTypesResult] = await db.batch([
     db.prepare("SELECT COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active, SUM(CASE WHEN status = 'deactivated' THEN 1 ELSE 0 END) as deactivated, SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) as suspended FROM licenses"),
     db.prepare("SELECT COUNT(DISTINCT slug) as total, COUNT(*) as totalVersions FROM plugin_versions"),
     db.prepare("SELECT COUNT(*) as total FROM tamper_logs WHERE created_at > datetime('now', '-24 hours')"),
     db.prepare("SELECT id, purchase_code, domain, status, buyer_email, last_validated_at, created_at FROM licenses ORDER BY created_at DESC LIMIT 5"),
     db.prepare("SELECT id, domain, failures, ip, created_at FROM tamper_logs ORDER BY created_at DESC LIMIT 5"),
     db.prepare(`SELECT COUNT(*) as total_24h, SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) as success, SUM(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 ELSE 0 END) as client_error, SUM(CASE WHEN status_code >= 500 THEN 1 ELSE 0 END) as server_error, AVG(response_time_ms) as avg_response FROM api_logs WHERE created_at > datetime('now', '-24 hours')`),
+    db.prepare("SELECT license_type, COUNT(*) as count FROM licenses GROUP BY license_type"),
   ]);
 
   const licenses = licensesResult.results?.[0] as { total: number; active: number; deactivated: number; suspended: number } | undefined;
   const plugins = pluginsResult.results?.[0] as { total: number; totalVersions: number } | undefined;
   const tamper = tamperResult.results?.[0] as { total: number } | undefined;
   const api = apiStats.results?.[0] as { total_24h: number; success: number; client_error: number; server_error: number; avg_response: number } | undefined;
+  const licenseTypes = (licenseTypesResult.results || []) as { license_type: string; count: number }[];
+  const licenseTypeStats = licenseTypes.reduce<Record<string, number>>((acc, row) => {
+    acc[row.license_type] = row.count;
+    return acc;
+  }, {});
 
   return c.json({
     totalLicenses: licenses?.total || 0,
@@ -69,6 +75,10 @@ adminRoutes.get("/stats", async (c) => {
     totalPlugins: plugins?.total || 0,
     totalPluginVersions: plugins?.totalVersions || 0,
     recentTamperAttempts: tamper?.total || 0,
+    licenseTypes: {
+      regular: licenseTypeStats.regular || 0,
+      extended: licenseTypeStats.extended || 0,
+    },
     apiStats: {
       total24h: api?.total_24h || 0,
       success: api?.success || 0,
@@ -99,7 +109,7 @@ adminRoutes.post("/licenses", async (c) => {
   const now = new Date().toISOString();
   const licenseType = body.license_type || "regular";
 
-  if (!["regular", "extended", "lifetime"].includes(licenseType)) {
+  if (!["regular", "extended"].includes(licenseType)) {
     return c.json({ error: "Invalid license_type" }, 400);
   }
 

@@ -47,6 +47,10 @@ interface Stats {
   activeLicenses: number
   deactivatedLicenses: number
   suspendedLicenses: number
+  licenseTypes: {
+    regular: number
+    extended: number
+  }
   totalPlugins: number
   totalPluginVersions: number
   recentTamperAttempts: number
@@ -76,6 +80,7 @@ interface Stats {
 }
 
 const PIE_COLORS = ["#22c55e", "#f59e0b", "#ef4444"]
+const TYPE_COLORS = ["#3b82f6", "#a855f7", "#94a3b8"]
 
 export function Dashboard() {
   const navigate = useNavigate()
@@ -108,6 +113,11 @@ export function Dashboard() {
     { name: "Active", value: stats.activeLicenses },
     { name: "Deactivated", value: stats.deactivatedLicenses },
     { name: "Suspended", value: stats.suspendedLicenses },
+  ].filter(d => d.value > 0) : []
+
+  const licenseTypePieData = stats ? [
+    { name: "Regular", value: stats.licenseTypes.regular },
+    { name: "Extended", value: stats.licenseTypes.extended },
   ].filter(d => d.value > 0) : []
 
   const chartData = stats ? [
@@ -180,7 +190,7 @@ export function Dashboard() {
 
       {/* Charts Row */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <IconServer className="h-4 w-4" />
@@ -234,6 +244,41 @@ export function Dashboard() {
               {licensePieData.map((item, i) => (
                 <div key={item.name} className="flex items-center gap-1.5 text-xs">
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PIE_COLORS[i] }} />
+                  <span className="text-muted-foreground">{item.name}: {item.value}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <IconKey className="h-4 w-4" />
+              License Types
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={licenseTypePieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
+                    {licenseTypePieData.map((_, index) => (
+                      <Cell key={`type-cell-${index}`} fill={TYPE_COLORS[index % TYPE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "oklch(0.205 0 0)", border: "1px solid oklch(1 0 0 / 10%)", borderRadius: "8px", fontSize: "12px" }}
+                    labelStyle={{ color: "oklch(0.985 0 0)" }}
+                    itemStyle={{ color: "oklch(0.985 0 0)" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex items-center justify-center gap-4 mt-2">
+              {licenseTypePieData.map((item, i) => (
+                <div key={item.name} className="flex items-center gap-1.5 text-xs">
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: TYPE_COLORS[i] }} />
                   <span className="text-muted-foreground">{item.name}: {item.value}</span>
                 </div>
               ))}

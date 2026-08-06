@@ -56,7 +56,7 @@ export function createMcpServer(env: McpEnv) {
   server.registerTool(
     "create_license",
     {
-      description: "Create a new license manually. Requires purchase_code and domain. Optionally set license_type (regular/extended/lifetime), buyer info.",
+      description: "Create a new license manually. Requires purchase_code and domain. Optionally set license_type (regular/extended), buyer info.",
       inputSchema: z.object({
         purchase_code: z.string().describe("Unique purchase code"),
         domain: z.string().describe("Domain to bind the license to"),

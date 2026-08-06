@@ -228,8 +228,6 @@ export function Licenses() {
         return <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20">Regular</Badge>
       case "extended":
         return <Badge className="bg-purple-500/15 text-purple-500 border-purple-500/20">Extended</Badge>
-      case "lifetime":
-        return <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">Lifetime</Badge>
       default:
         return <Badge>{type}</Badge>
     }
@@ -420,7 +418,6 @@ export function Licenses() {
                 <SelectContent>
                   <SelectItem value="regular">Regular</SelectItem>
                   <SelectItem value="extended">Extended</SelectItem>
-                  <SelectItem value="lifetime">Lifetime</SelectItem>
                 </SelectContent>
               </Select>
             </div>

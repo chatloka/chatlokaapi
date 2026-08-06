@@ -13,6 +13,7 @@ import {
   IconServer,
   IconTicket,
   IconChartHistogram,
+  IconRocket,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -39,6 +40,7 @@ import { NotificationSheet } from "@/components/NotificationSheet"
 const navItems = [
   { to: "/manage", icon: IconDashboard, label: "Dashboard", end: true },
   { to: "/manage/licenses", icon: IconKey, label: "Licenses" },
+  { to: "/manage/releases", icon: IconRocket, label: "Releases" },
   { to: "/manage/plugins", icon: IconPackage, label: "Plugins" },
   { to: "/manage/logs", icon: IconReceipt, label: "Logs" },
   {

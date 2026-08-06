@@ -521,6 +521,22 @@ export function TicketDetail() {
               Merge
             </Button>
           )}
+          {ticket.status !== "closed" && ticket.status !== "merged" && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="cursor-pointer border-green-500/40 text-green-400 hover:bg-green-500/10 hover:text-green-300"
+              onClick={() => handleStatusChange("closed")}
+              disabled={updatingStatus}
+            >
+              {updatingStatus ? (
+                <IconLoader size={14} className="mr-1 animate-spin" />
+              ) : (
+                <IconCircleCheck size={14} className="mr-1" />
+              )}
+              Mark as Resolved
+            </Button>
+          )}
           <Badge
             variant={statusBadge.variant}
             className={`${statusBadge.className} gap-1 text-xs`}
