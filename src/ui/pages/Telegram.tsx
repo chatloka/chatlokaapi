@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
   SelectContent,
@@ -62,19 +61,6 @@ interface Overview {
   actions: Array<{ action: string; total: number }>
 }
 
-interface WebhookLog {
-  id: number
-  provider: string
-  event_type: string | null
-  telegram_update_id: number | null
-  chat_id: number | null
-  source_ip: string | null
-  raw_payload: string
-  handled: number
-  error_message: string | null
-  created_at: string
-}
-
 interface BotLog {
   id: number
   direction: string
@@ -90,11 +76,6 @@ interface BotLog {
   error_message: string | null
   telegram_message_id: number | null
   created_at: string
-}
-
-interface WebhookLogsResponse {
-  logs: WebhookLog[]
-  pagination: Pagination
 }
 
 interface BotLogsResponse {
@@ -117,15 +98,9 @@ function toWIB(dateStr: string) {
 
 export function Telegram() {
   const [overview, setOverview] = useState<Overview | null>(null)
-  const [webhookLogs, setWebhookLogs] = useState<WebhookLog[]>([])
   const [botLogs, setBotLogs] = useState<BotLog[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-
-  const [whPage, setWhPage] = useState(1)
-  const [whProvider, setWhProvider] = useState("all")
-  const [whHandled, setWhHandled] = useState("all")
-  const [whPagination, setWhPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 })
 
   const [botPage, setBotPage] = useState(1)
   const [botAction, setBotAction] = useState("all")
@@ -142,24 +117,6 @@ export function Telegram() {
       console.error("Failed to fetch telegram overview:", err)
     }
   }, [])
-
-  const fetchWebhookLogs = useCallback(async () => {
-    try {
-      const providerParam = whProvider !== "all" ? `&provider=${encodeURIComponent(whProvider)}` : ""
-      const handledParam = whHandled !== "all" ? `&handled=${whHandled}` : ""
-      const res = await fetch(
-        `/manage/api/logs/webhooks?page=${whPage}&limit=20&sort=newest${providerParam}${handledParam}`,
-        { credentials: "include" },
-      )
-      if (res.ok) {
-        const data = await res.json() as WebhookLogsResponse
-        setWebhookLogs(data.logs || [])
-        setWhPagination(data.pagination)
-      }
-    } catch (err) {
-      console.error("Failed to fetch webhook logs:", err)
-    }
-  }, [whPage, whProvider, whHandled])
 
   const fetchBotLogs = useCallback(async () => {
     try {
@@ -180,50 +137,13 @@ export function Telegram() {
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchOverview(), fetchWebhookLogs(), fetchBotLogs()]).finally(() => setLoading(false))
-  }, [fetchOverview, fetchWebhookLogs, fetchBotLogs])
+    Promise.all([fetchOverview(), fetchBotLogs()]).finally(() => setLoading(false))
+  }, [fetchOverview, fetchBotLogs])
 
   function handleRefresh() {
     fetchOverview()
-    fetchWebhookLogs()
     fetchBotLogs()
     toast.success("Telegram data refreshed")
-  }
-
-  async function handleSetWebhook() {
-    setBusy("set-webhook")
-    try {
-      const res = await fetch("/manage/api/telegram/set-webhook", { method: "POST", credentials: "include" })
-      const data = await res.json() as { success?: boolean; description?: string; error?: string }
-      if (data.success) {
-        toast.success("Webhook Telegram terdaftar")
-        fetchOverview()
-      } else {
-        toast.error(data.error || data.description || "Gagal mendaftarkan webhook")
-      }
-    } catch {
-      toast.error("Gagal menghubungi API")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function handleDeleteWebhook() {
-    setBusy("delete-webhook")
-    try {
-      const res = await fetch("/manage/api/telegram/delete-webhook", { method: "POST", credentials: "include" })
-      const data = await res.json() as { success?: boolean; description?: string }
-      if (data.success) {
-        toast.success("Webhook dihapus")
-        fetchOverview()
-      } else {
-        toast.error(data.description || "Gagal menghapus webhook")
-      }
-    } catch {
-      toast.error("Gagal menghubungi API")
-    } finally {
-      setBusy(null)
-    }
   }
 
   async function handleTest() {
@@ -241,16 +161,6 @@ export function Telegram() {
     } finally {
       setBusy(null)
     }
-  }
-
-  function handleWhProviderChange(v: string) {
-    setWhProvider(v)
-    setWhPage(1)
-  }
-
-  function handleWhHandledChange(v: string) {
-    setWhHandled(v)
-    setWhPage(1)
   }
 
   function handleBotActionChange(v: string) {
@@ -290,15 +200,6 @@ export function Telegram() {
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  className="cursor-pointer"
-                  disabled={busy !== null}
-                  onClick={handleSetWebhook}
-                >
-                  <IconWebhook className="mr-2 h-4 w-4" />
-                  {busy === "set-webhook" ? "Registering…" : "Register Webhook"}
-                </Button>
-                <Button
-                  size="sm"
                   variant="outline"
                   className="cursor-pointer"
                   disabled={busy !== null}
@@ -306,15 +207,6 @@ export function Telegram() {
                 >
                   <IconSend className="mr-2 h-4 w-4" />
                   {busy === "test" ? "Sending…" : "Test Bot"}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="cursor-pointer text-destructive hover:text-destructive"
-                  disabled={busy !== null}
-                  onClick={handleDeleteWebhook}
-                >
-                  Delete
                 </Button>
               </div>
             </div>
@@ -395,255 +287,125 @@ export function Telegram() {
         </Card>
       )}
 
-      <Tabs defaultValue="actions">
-        <TabsList>
-          <TabsTrigger value="actions" className="gap-2 cursor-pointer">
-            <IconRobot className="h-4 w-4" />
-            Bot Actions ({botPagination.total})
-          </TabsTrigger>
-          <TabsTrigger value="webhooks" className="gap-2 cursor-pointer">
-            <IconWebhook className="h-4 w-4" />
-            Webhook Logs ({whPagination.total})
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Bot logs tab */}
-        <TabsContent value="actions">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle>Bot Action Logs</CardTitle>
-                  <CardDescription>
-                    Page {botPagination.page} of {botPagination.totalPages} ({botPagination.total} total)
-                  </CardDescription>
-                </div>
-                <Select value={botAction} onValueChange={(v) => v && handleBotActionChange(v)}>
-                  <SelectTrigger className="w-[220px] cursor-pointer">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All actions</SelectItem>
-                    <SelectItem value="message">message</SelectItem>
-                    <SelectItem value="callback:ticket_view">callback:ticket_view</SelectItem>
-                    <SelectItem value="reply_send">reply_send</SelectItem>
-                    <SelectItem value="notify:ticket_new">notify:ticket_new</SelectItem>
-                    <SelectItem value="notify:message_inbound">notify:message_inbound</SelectItem>
-                    <SelectItem value="notify:ticket_reopened">notify:ticket_reopened</SelectItem>
-                    <SelectItem value="ignored_chat">ignored_chat</SelectItem>
-                    <SelectItem value="error">error</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <CardTableSkeleton rows={8} columns={6} />
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Time (WIB)</TableHead>
-                        <TableHead>Direction</TableHead>
-                        <TableHead>Action</TableHead>
-                        <TableHead>Chat</TableHead>
-                        <TableHead>Ticket</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Detail</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {botLogs.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                            Belum ada aksi bot tercatat.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      {botLogs.map((log) => (
-                        <TableRow key={log.id}>
-                          <TableCell className="whitespace-nowrap font-mono text-xs">
-                            {toWIB(log.created_at)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={log.direction === "outbound" ? "bg-blue-500/15 text-blue-500 border-blue-500/20 cursor-default" : "bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default"}
-                            >
-                              {log.direction}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-mono text-xs">{log.action}</span>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{log.chat_id ?? "—"}</TableCell>
-                          <TableCell className="font-mono text-xs">{log.ticket_number || "—"}</TableCell>
-                          <TableCell>
-                            {log.status === "error" ? (
-                              <Badge className="bg-red-500/15 text-red-500 border-red-500/20 cursor-default">{log.status}</Badge>
-                            ) : log.status === "ignored" ? (
-                              <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20 cursor-default">{log.status}</Badge>
-                            ) : (
-                              <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default">{log.status}</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="max-w-[220px] truncate text-xs text-muted-foreground" title={log.message || log.error_message || ""}>
-                            {log.error_message || log.message || "—"}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              {botPagination.totalPages > 1 && (
-                <div className="mt-4 flex items-center justify-between">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="cursor-pointer"
-                    disabled={botPage <= 1}
-                    onClick={() => setBotPage((p) => Math.max(1, p - 1))}
-                  >
-                    <IconChevronLeft className="mr-1 h-4 w-4" /> Prev
-                  </Button>
-                  <span className="text-sm text-muted-foreground">
-                    {botPage} / {botPagination.totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="cursor-pointer"
-                    disabled={botPage >= botPagination.totalPages}
-                    onClick={() => setBotPage((p) => p + 1)}
-                  >
-                    Next <IconChevronRight className="ml-1 h-4 w-4" />
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Webhook logs tab */}
-        <TabsContent value="webhooks">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle>Incoming Webhook Payloads</CardTitle>
-                  <CardDescription>
-                    Page {whPagination.page} of {whPagination.totalPages} ({whPagination.total} total)
-                  </CardDescription>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Select value={whProvider} onValueChange={(v) => v && handleWhProviderChange(v)}>
-                    <SelectTrigger className="w-[150px] cursor-pointer">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All providers</SelectItem>
-                      <SelectItem value="telegram">telegram</SelectItem>
-                      <SelectItem value="resend">resend</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={whHandled} onValueChange={(v) => v && handleWhHandledChange(v)}>
-                    <SelectTrigger className="w-[140px] cursor-pointer">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All states</SelectItem>
-                      <SelectItem value="1">Handled</SelectItem>
-                      <SelectItem value="0">Failed / ignored</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <CardTableSkeleton rows={8} columns={6} />
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Time (WIB)</TableHead>
-                        <TableHead>Provider</TableHead>
-                        <TableHead>Event</TableHead>
-                        <TableHead>Update ID</TableHead>
-                        <TableHead>Chat ID</TableHead>
-                        <TableHead>Source IP</TableHead>
-                        <TableHead>Handled</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {webhookLogs.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
-                            Belum ada webhook tercatat.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      {webhookLogs.map((log) => (
-                        <TableRow key={log.id}>
-                          <TableCell className="whitespace-nowrap font-mono text-xs">
-                            {toWIB(log.created_at)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="cursor-default">
-                              {log.provider}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{log.event_type || "—"}</TableCell>
-                          <TableCell className="font-mono text-xs">{log.telegram_update_id ?? "—"}</TableCell>
-                          <TableCell className="font-mono text-xs">{log.chat_id ?? "—"}</TableCell>
-                          <TableCell className="font-mono text-xs">{log.source_ip || "—"}</TableCell>
-                          <TableCell>
-                            {log.handled === 1 ? (
-                              <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default">ok</Badge>
-                            ) : (
-                              <Badge className="bg-red-500/15 text-red-500 border-red-500/20 cursor-default" title={log.error_message || ""}>
-                                failed
-                              </Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              {whPagination.totalPages > 1 && (
-                <div className="mt-4 flex items-center justify-between">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="cursor-pointer"
-                    disabled={whPage <= 1}
-                    onClick={() => setWhPage((p) => Math.max(1, p - 1))}
-                  >
-                    <IconChevronLeft className="mr-1 h-4 w-4" /> Prev
-                  </Button>
-                  <span className="text-sm text-muted-foreground">
-                    {whPage} / {whPagination.totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="cursor-pointer"
-                    disabled={whPage >= whPagination.totalPages}
-                    onClick={() => setWhPage((p) => p + 1)}
-                  >
-                    Next <IconChevronRight className="ml-1 h-4 w-4" />
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      {/* Bot action logs */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <IconRobot className="h-5 w-5" />
+                Bot Action Logs
+              </CardTitle>
+              <CardDescription>
+                Page {botPagination.page} of {botPagination.totalPages} ({botPagination.total} total)
+              </CardDescription>
+            </div>
+            <Select value={botAction} onValueChange={(v) => v && handleBotActionChange(v)}>
+              <SelectTrigger className="w-[220px] cursor-pointer">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All actions</SelectItem>
+                <SelectItem value="message">message</SelectItem>
+                <SelectItem value="callback:ticket_view">callback:ticket_view</SelectItem>
+                <SelectItem value="reply_send">reply_send</SelectItem>
+                <SelectItem value="notify:ticket_new">notify:ticket_new</SelectItem>
+                <SelectItem value="notify:message_inbound">notify:message_inbound</SelectItem>
+                <SelectItem value="notify:ticket_reopened">notify:ticket_reopened</SelectItem>
+                <SelectItem value="ignored_chat">ignored_chat</SelectItem>
+                <SelectItem value="error">error</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <CardTableSkeleton rows={8} columns={6} />
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time (WIB)</TableHead>
+                    <TableHead>Direction</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Chat</TableHead>
+                    <TableHead>Ticket</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Detail</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {botLogs.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                        Belum ada aksi bot tercatat.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {botLogs.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell className="whitespace-nowrap font-mono text-xs">
+                        {toWIB(log.created_at)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={log.direction === "outbound" ? "bg-blue-500/15 text-blue-500 border-blue-500/20 cursor-default" : "bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default"}
+                        >
+                          {log.direction}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-xs">{log.action}</span>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{log.chat_id ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{log.ticket_number || "—"}</TableCell>
+                      <TableCell>
+                        {log.status === "error" ? (
+                          <Badge className="bg-red-500/15 text-red-500 border-red-500/20 cursor-default">{log.status}</Badge>
+                        ) : log.status === "ignored" ? (
+                          <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20 cursor-default">{log.status}</Badge>
+                        ) : (
+                          <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 cursor-default">{log.status}</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-[220px] truncate text-xs text-muted-foreground" title={log.message || log.error_message || ""}>
+                        {log.error_message || log.message || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          {botPagination.totalPages > 1 && (
+            <div className="mt-4 flex items-center justify-between">
+              <Button
+                variant="outline"
+                size="sm"
+                className="cursor-pointer"
+                disabled={botPage <= 1}
+                onClick={() => setBotPage((p) => Math.max(1, p - 1))}
+              >
+                <IconChevronLeft className="mr-1 h-4 w-4" /> Prev
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {botPage} / {botPagination.totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="cursor-pointer"
+                disabled={botPage >= botPagination.totalPages}
+                onClick={() => setBotPage((p) => p + 1)}
+              >
+                Next <IconChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

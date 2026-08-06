@@ -46,6 +46,7 @@ export interface TelegramMessage {
   chat: TelegramChat
   date: number
   text?: string
+  caption?: string
   photo?: TelegramPhotoSize[]
   document?: TelegramDocument
   reply_to_message?: TelegramMessage
@@ -472,7 +473,7 @@ export class TelegramBotService {
   private async handleMessage(message: TelegramMessage, updateId: number): Promise<void> {
     if (!this.api) return
     const chatId = message.chat.id
-    const text = (message.text || '').trim()
+    const text = (message.text || message.caption || '').trim()
 
     // If a reply draft is pending, don't interpret the message as a command.
     const pending = await this.getChatState(chatId)
@@ -554,19 +555,25 @@ export class TelegramBotService {
   private async handleReplyDraft(message: TelegramMessage, pending: ChatState): Promise<void> {
     if (!this.api || !pending.ticket_id) return
     const chatId = message.chat.id
+    const incomingText = (message.text || message.caption || '').trim()
 
-    // Cancel any previous draft with "cancel"
-    if ((message.text || '').trim().toLowerCase() === 'cancel') {
+    // Cancel any previous draft with "cancel" — return to the ticket screen.
+    if (incomingText.toLowerCase() === 'cancel') {
+      const ticket = await this.ticketService.getTicketById(pending.ticket_id)
       await this.clearChatState(chatId)
-      await this.api.sendMessage(chatId, '✖️ Draft reply dibatalkan.')
+      if (ticket) {
+        await this.showTicket(ticket)
+      } else {
+        await this.api.sendMessage(chatId, '✖️ Draft reply dibatalkan.')
+      }
       return
     }
 
     const attachments: ChatAttachment[] = pending.attachments ? [...pending.attachments] : []
     let draftText = pending.text || ''
 
-    if (message.text) {
-      draftText = draftText ? `${draftText}\n\n${message.text}` : message.text
+    if (incomingText) {
+      draftText = draftText ? `${draftText}\n\n${incomingText}` : incomingText
     }
 
     // File part: download to R2 and remember the path for email attach later.
@@ -682,14 +689,35 @@ export class TelegramBotService {
       case 'ticket_history': {
         const id = Number(parts[0])
         const ticket = await this.ticketService.getTicketById(id)
-        if (!ticket || !query.message) break
-        const messages = await this.ticketService.getTicketMessages(ticket.id)
-        if (query.message) {
-          await this.api.editMessageText(chatId, query.message.message_id, this.formatHistory(ticket, messages), {
-            parse_mode: 'HTML',
-            reply_markup: inlineKeyboard([[{ text: '↩️ Back', callback_data: `ticket_view:${ticket.id}` }]]),
-          })
-        }
+        if (!ticket) break
+        await this.showTicketHistory(query, ticket, 1)
+        break
+      }
+      case 'ticket_history_pg': {
+        const id = Number(parts[0])
+        const page = Math.max(1, Number(parts[1]) || 1)
+        const ticket = await this.ticketService.getTicketById(id)
+        if (!ticket) break
+        await this.showTicketHistory(query, ticket, page)
+        break
+      }
+      case 'msg_view': {
+        const messageId = Number(parts[0])
+        const ticketId = Number(parts[1])
+        const page = Math.max(1, Number(parts[2]) || 1)
+        const message = await this.ticketService.getTicketMessageById(messageId)
+        if (!message || !query.message) break
+        const attachments = await this.ticketService.getMessageAttachments(message.id)
+        await this.api.editMessageText(chatId, query.message.message_id, this.formatMessageDetail(message, attachments), {
+          parse_mode: 'HTML',
+          reply_markup: inlineKeyboard([
+            [
+              { text: '📜 History', callback_data: `ticket_history_pg:${ticketId}:${page}` },
+              { text: '💬 Reply', callback_data: `reply_start:${ticketId}` },
+            ],
+            [{ text: '↩️ Ticket', callback_data: `ticket_view:${ticketId}` }],
+          ]),
+        })
         break
       }
       case 'ticket_attachments': {
@@ -721,7 +749,16 @@ export class TelegramBotService {
         await this.sendPendingReply(query)
         break
       case 'reply_cancel': {
+        const state = await this.getChatState(chatId)
+        const ticketId = state?.ticket_id
         await this.clearChatState(chatId)
+        if (ticketId) {
+          const ticket = await this.ticketService.getTicketById(ticketId)
+          if (ticket) {
+            await this.showTicket(ticket)
+            break
+          }
+        }
         await this.api.sendMessage(chatId, '✖️ Dibatalkan.')
         break
       }
@@ -1149,21 +1186,65 @@ export class TelegramBotService {
     ])
   }
 
-  private formatHistory(ticket: Ticket, messages: TicketMessage[]): string {
-    const reps = messages.slice(-6)
-    const lines = reps.map((m) => {
+  private HISTORY_PAGE_SIZE = 5
+
+  private async showTicketHistory(
+    query: TelegramCallbackQuery,
+    ticket: Ticket,
+    page: number,
+  ): Promise<void> {
+    if (!this.api) return
+    if (!query.message) return
+    const msg = query.message
+    const count = await this.ticketService.countTicketMessages(ticket.id)
+    const totalPages = Math.max(1, Math.ceil(count / this.HISTORY_PAGE_SIZE))
+    const clampedPage = Math.min(Math.max(1, page), totalPages)
+    const offset = (clampedPage - 1) * this.HISTORY_PAGE_SIZE
+    const messages = await this.ticketService.getTicketMessagePage(ticket.id, offset, this.HISTORY_PAGE_SIZE)
+
+    const lines = messages.map((m) => {
       const dir = m.direction === 'inbound' ? '📥' : '📤'
       const body = (m.body_text || '').split('\n').slice(0, 2).join(' ')
       const preview = body.length > 120 ? `${body.slice(0, 120)}…` : body
       const atts = m.has_attachments ? ' 📎' : ''
-      return `${dir} <code>${escapeHtml(m.created_at || '')}</code>\n${escapeHtml(preview || '')}${atts}`
+      return `${dir} <code>${escapeHtml(m.created_at || '')}</code>\n${escapeHtml(preview || '(no text)')}${atts}\n<b>🔍 Detail</b> ${m.id}`
     })
 
-    return [
-      `History <b>${escapeHtml(ticket.ticket_number)}</b>:`,
+    const text = [
+      `History <b>${escapeHtml(ticket.ticket_number)}</b> (page ${clampedPage}/${totalPages}):`,
       '',
       ...(lines.length === 0 ? ['Belum ada pesan.'] : lines),
     ].join('\n')
+
+    const navButtons = []
+    if (clampedPage > 1) {
+      navButtons.push({ text: '⬅️ Prev', callback_data: `ticket_history_pg:${ticket.id}:${clampedPage - 1}` })
+    }
+    if (clampedPage < totalPages) {
+      navButtons.push({ text: 'Next ➡️', callback_data: `ticket_history_pg:${ticket.id}:${clampedPage + 1}` })
+    }
+
+    const rows: TelegramCallbackButton[][] = messages.map((m) => [
+      { text: `🔍 #${m.id}`, callback_data: `msg_view:${m.id}:${ticket.id}:${clampedPage}` },
+    ])
+    if (navButtons.length > 0) rows.push(navButtons)
+    rows.push([{ text: '↩️ Back', callback_data: `ticket_view:${ticket.id}` }])
+
+    await this.api.editMessageText(msg.chat.id, msg.message_id, text, {
+      parse_mode: 'HTML',
+      reply_markup: inlineKeyboard(rows),
+    })
+  }
+
+  private formatMessageDetail(message: TicketMessage, attachments: TicketAttachment[]): string {
+    const dir = message.direction === 'inbound' ? '📥 Inbound' : '📤 Outbound'
+    const lines = [
+      `<b>${dir}</b> · <code>${escapeHtml(message.created_at || '')}</code>`,
+      '',
+      ...(message.body_text ? [escapeHtml(message.body_text)] : []),
+      ...(attachments.length > 0 ? ['', '📎 Attachments:', ...attachments.map((a) => ` • ${escapeHtml(a.filename)}`)] : []),
+    ]
+    return lines.join('\n')
   }
 
   // ------------------------------------------------------------------

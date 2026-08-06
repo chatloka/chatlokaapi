@@ -377,6 +377,20 @@ export class TicketService {
     return (result.results || []) as unknown as TicketMessage[]
   }
 
+  async countTicketMessages(ticketId: number): Promise<number> {
+    const result = await this.db.prepare(
+      'SELECT COUNT(*) as count FROM ticket_messages WHERE ticket_id = ?'
+    ).bind(ticketId).first<{ count: number }>()
+    return result?.count ?? 0
+  }
+
+  async getTicketMessagePage(ticketId: number, offset: number, limit: number): Promise<TicketMessage[]> {
+    const result = await this.db.prepare(
+      'SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    ).bind(ticketId, limit, offset).all()
+    return (result.results || []) as unknown as TicketMessage[]
+  }
+
   async getTicketMessageById(id: number): Promise<TicketMessage | null> {
     return first<TicketMessage>(this.db, 'SELECT * FROM ticket_messages WHERE id = ? LIMIT 1', id)
   }

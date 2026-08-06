@@ -16,6 +16,7 @@ import {
   IconRocket,
   IconUsers,
   IconBrandTelegram,
+  IconWebhook,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -64,6 +65,7 @@ const navItems = [
   { to: "/manage/tickets/analytics", icon: IconChartHistogram, label: "Analytics" },
   { to: "/manage/mcp", icon: IconServer, label: "MCP" },
   { to: "/manage/telegram", icon: IconBrandTelegram, label: "Telegram" },
+  { to: "/manage/webhook-logs", icon: IconWebhook, label: "Webhook Logs" },
 ]
 
 const STORAGE_KEY = "sidebar_collapsed"
