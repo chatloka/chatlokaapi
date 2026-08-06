@@ -886,6 +886,7 @@ async function sendTicketAcknowledgement(
   originalSubject: string,
   messagePreview: string,
   resendService: ResendService,
+  originalMessageId: string | null,
   reopened = false,
 ): Promise<void> {
   const fromName = env.TICKET_FROM_NAME || 'Chatloka Support'
@@ -893,9 +894,9 @@ async function sendTicketAcknowledgement(
   const from = `${fromName} <${fromEmail}>`
   const ticketNumber = ticket.ticket_number
 
-  const ackSubject = reopened
-    ? `[${ticketNumber}] ${originalSubject} has been reopened`
-    : `[${ticketNumber}] ${originalSubject} has been opened`
+  const ackSubject = originalSubject
+    ? `Re: ${originalSubject}`
+    : 'Re: Chatloka Support'
 
   const greetingHtml = customerName ? `Dear ${escapeHtml(customerName)},` : 'Dear valued customer,'
   const greetingText = customerName ? `Dear ${customerName},` : 'Dear valued customer,'
@@ -943,7 +944,7 @@ async function sendTicketAcknowledgement(
         <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;font-weight:600;color:#111827;">${ticketNumber}</div>
       </div>
       <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
-        Please keep this ticket ID for reference. When replying to this email, the ticket ID in the subject ensures your follow-ups are added to this ticket automatically.
+        Please keep this ticket ID for reference. Simply reply to this email for any follow-up — your message will be added to this ticket automatically.
       </p>
       ${previewHtml ? `
       <div style="margin:0 0 16px;padding:12px 16px;border-left:3px solid #93c5fd;background:#f9fafb;border-radius:0 8px 8px 0;">
@@ -965,12 +966,22 @@ async function sendTicketAcknowledgement(
     ? `Your ticket has been re-opened.\n\n${greetingText}\n\nThank you for contacting Chatloka Support. Your support ticket ${ticketNumber} has been successfully reopened and is being processed by our team.\n\nTicket ID: ${ticketNumber}\n\nA member of our support team will reach out to you shortly. No further action is required on your end at this time.\n\nHow to reply: simply reply to this email — your message will be added to ${ticketNumber} automatically.\n\nThank you for your patience and understanding.\n\nChatloka Support`
     : `Your message has been received.\n\n${greetingText}\n\nThank you for contacting Chatloka Support. Your request has been received, and a support ticket has been created to track it.\n\nTicket ID: ${ticketNumber}\n\nPlease keep this ticket ID for reference.\n\nHow to reply: simply reply to this email — your message will be added to ${ticketNumber} automatically; no new email is needed.\n\nOur support team will respond to your request as soon as possible.\n\nChatloka Support`
 
+  // Reply directly to the customer's email so their client threads the ack
+  // in the same conversation (In-Reply-To/References = their original Message-ID).
+  // Their follow-ups then resolve back to this ticket via message-id lookup.
+  const replyHeaders: Record<string, string> = {}
+  if (originalMessageId) {
+    replyHeaders['In-Reply-To'] = originalMessageId
+    replyHeaders['References'] = originalMessageId
+  }
+
   const result = await resendService.sendEmail({
     from,
     to: [customerEmail],
     subject: ackSubject,
     html: ackHtml,
     text: ackText,
+    headers: replyHeaders,
   })
 
   // Real Message-ID so the customer's reply to the ack maps back to this ticket.
@@ -1000,7 +1011,7 @@ async function sendTicketAcknowledgement(
   await ticketService.createEmailThread({
     ticket_id: ticket.id,
     message_id: sentMessageId,
-    parent_message_id: null,
+    parent_message_id: originalMessageId,
   })
 }
 
@@ -1243,6 +1254,7 @@ app.post('/api/webhooks/resend', async (c) => {
           event.data.subject || '',
           messagePreview,
           resendService,
+          event.data.message_id || null,
           wasReopened,
         )
       } catch (ackErr) {
