@@ -175,6 +175,7 @@ export function Tickets() {
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
+  const [priorityFilter, setPriorityFilter] = useState("all")
   const [sort, setSort] = useState("newest")
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 })
@@ -189,6 +190,7 @@ export function Tickets() {
       })
       if (statusFilter !== "all") params.set("status", statusFilter)
       if (categoryFilter !== "all") params.set("category", categoryFilter)
+      if (priorityFilter !== "all") params.set("priority", priorityFilter)
       if (search) params.set("search", search)
 
       const res = await fetch(`/manage/api/tickets?${params}`, { credentials: "include" })
@@ -202,7 +204,7 @@ export function Tickets() {
     } finally {
       setLoading(false)
     }
-  }, [page, statusFilter, categoryFilter, sort, search])
+  }, [page, statusFilter, categoryFilter, priorityFilter, sort, search])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -218,7 +220,7 @@ export function Tickets() {
 
   useEffect(() => {
     fetchTickets()
-  }, [page, statusFilter, categoryFilter, sort, fetchTickets])
+  }, [page, statusFilter, categoryFilter, priorityFilter, sort, fetchTickets])
 
   useEffect(() => {
     fetchStats()
@@ -366,6 +368,22 @@ export function Tickets() {
                       {getCategoryLabel(cat)}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Priority Filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">Priority:</span>
+              <Select value={priorityFilter} onValueChange={(val) => { if (val) { setPriorityFilter(val); setPage(1) } }}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Priorities</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
                 </SelectContent>
               </Select>
             </div>

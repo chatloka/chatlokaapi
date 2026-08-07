@@ -808,6 +808,7 @@ adminRoutes.get("/tickets", async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
   const status = c.req.query("status") || "all";
   const category = c.req.query("category") || "all";
+  const priority = c.req.query("priority") || "all";
   const search = c.req.query("search") || "";
   const sort = c.req.query("sort") || "newest";
 
@@ -815,6 +816,7 @@ adminRoutes.get("/tickets", async (c) => {
   const { tickets, total } = await ticketService.getTicketsPaginated(page, limit, {
     status: status !== "all" ? status : undefined,
     category: category !== "all" ? category : undefined,
+    priority: priority !== "all" ? priority : undefined,
     search: search || undefined,
     sort,
   });

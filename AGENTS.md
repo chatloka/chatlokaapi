@@ -261,7 +261,7 @@ chatlokaapi/
 - `publish_plugin_version` — Step 2 of release (manual): register uploaded zip as latest (checksum required)
 
 ### Ticket Management (Support)
-- `get_tickets` — List tickets (status/category/search/sort/pagination + contact badges)
+- `get_tickets` — List tickets (status/category/priority/search/sort/pagination + contact badges)
 - `get_ticket` — Full ticket detail (messages, attachments, participants, merge context, contact)
 - `get_ticket_attachments` — List all attachments across a ticket's messages
 - `reply_ticket` — Send email reply via Resend (threading headers, CC participants)

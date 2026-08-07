@@ -72,7 +72,7 @@ export class TicketService {
   async getTicketsPaginated(
     page: number,
     limit: number,
-    options?: { status?: string; search?: string; sort?: string; category?: string }
+    options?: { status?: string; search?: string; sort?: string; category?: string; priority?: string }
   ): Promise<{ tickets: Ticket[]; total: number }> {
     let query = `SELECT t.*, c.contact_type, c.latest_purchase_code, c.latest_license_type, c.latest_support_until
       FROM tickets t
@@ -129,6 +129,14 @@ export class TicketService {
       countQuery += clause
       params.push(options.category)
       countParams.push(options.category)
+    }
+
+    if (options?.priority && options.priority !== 'all') {
+      const clause = ' AND priority = ?'
+      query += clause
+      countQuery += clause
+      params.push(options.priority)
+      countParams.push(options.priority)
     }
 
     const orderDir = options?.sort === 'oldest' ? 'ASC' : 'DESC'
@@ -329,8 +337,8 @@ export class TicketService {
     const now = new Date().toISOString()
     await run(
       this.db,
-      `INSERT INTO tickets (ticket_number, from_email, from_name, subject, purchase_code, domain, last_message_at, message_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      `INSERT INTO tickets (ticket_number, from_email, from_name, subject, purchase_code, domain, priority, last_message_at, message_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, 0, ?, ?)`,
       data.ticket_number,
       data.from_email,
       data.from_name || null,
