@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { CardTableSkeleton } from "@/components/Skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MergeTicketDialog } from "@/components/MergeTicketDialog";
+import { getCategoryLabel, TICKET_CATEGORIES, TICKET_CATEGORY_LABELS } from "@/lib/ticketCategories";
 import { ContactTypeBadge, SupportStatusBadge } from "@/components/ContactBadges";
 import { toast } from "sonner";
 import {
@@ -73,6 +74,7 @@ interface Ticket {
   subject: string;
   status: string;
   priority: string;
+  category?: string | null;
   assigned_to: string | null;
   last_message_at: string | null;
   message_count: number;
@@ -299,17 +301,6 @@ function formatSender(ticket: Ticket): string {
 // AI Ticket Analysis card (auto-triage summary rendered from ticket_ai_analyses)
 // ---------------------------------------------------------------------------
 
-const AI_CATEGORY_LABELS: Record<string, string> = {
-  bug: "Bug",
-  technical: "Technical",
-  suggestion: "Suggestion",
-  feature_request: "Feature Request",
-  billing: "Billing",
-  license_activation: "License Activation",
-  installation: "Installation",
-  other: "Other",
-};
-
 const AI_SENTIMENT_LABELS: Record<string, string> = {
   positive: "Positive",
   neutral: "Neutral",
@@ -318,13 +309,13 @@ const AI_SENTIMENT_LABELS: Record<string, string> = {
 };
 
 const AI_BADGE_COLORS: Record<string, string> = {
-  bug: "border-red-500/30 bg-red-500/10 text-red-400",
-  feature_request: "border-blue-500/30 bg-blue-500/10 text-blue-400",
-  suggestion: "border-violet-500/30 bg-violet-500/10 text-violet-400",
-  technical: "border-cyan-500/30 bg-cyan-500/10 text-cyan-400",
-  billing: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-  license_activation: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  pre_sale: "border-violet-500/30 bg-violet-500/10 text-violet-400",
   installation: "border-pink-500/30 bg-pink-500/10 text-pink-400",
+  bug: "border-red-500/30 bg-red-500/10 text-red-400",
+  customization: "border-cyan-500/30 bg-cyan-500/10 text-cyan-400",
+  feature_request: "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  license: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  billing: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
   other: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300",
   low: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300",
   medium: "border-amber-500/30 bg-amber-500/10 text-amber-400",
@@ -442,7 +433,7 @@ function AiAnalysisCard({ analysis }: { analysis: AiAnalysis }) {
         <div className="mb-3 flex flex-wrap gap-1.5">
           {analysis.category && (
             <Badge className={`border font-normal ${AI_BADGE_COLORS[analysis.category] || AI_BADGE_COLORS.other}`}>
-              {AI_CATEGORY_LABELS[analysis.category] || analysis.category}
+              {TICKET_CATEGORY_LABELS[analysis.category] || analysis.category}
             </Badge>
           )}
           {analysis.priority && (
@@ -557,9 +548,11 @@ export function TicketDetail() {
   const [replySending, setReplySending] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [updatingPriority, setUpdatingPriority] = useState(false);
+  const [updatingCategory, setUpdatingCategory] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState("");
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(null);
+  const [aiNullPollStopped, setAiNullPollStopped] = useState(false);
 
   const isReplyDirty =
     replyOpen &&
@@ -626,13 +619,23 @@ export function TicketDetail() {
     fetchAiAnalysis();
   }, [fetchAiAnalysis, aiAnalysis?.status]);
 
+  // Poll while a row exists but isn't finished. If the first fetch found
+  // nothing (analysis row not inserted yet), keep polling briefly so a
+  // freshly created ticket still shows the card once the workflow starts.
   useEffect(() => {
     const isActive =
-      aiAnalysis !== null &&
-      (aiAnalysis.status === "pending" || aiAnalysis.status === "processing");
+      aiAnalysis === null ? !aiNullPollStopped : aiAnalysis.status === "pending" || aiAnalysis.status === "processing";
     if (!isActive) return;
     const interval = setInterval(fetchAiAnalysis, 5000);
     return () => clearInterval(interval);
+  }, [fetchAiAnalysis, aiAnalysis, aiNullPollStopped]);
+
+  // Stop polling for tickets that will never have an analysis row
+  // (old tickets, or webhooks that failed before creating one).
+  useEffect(() => {
+    if (aiAnalysis !== null) return;
+    const timeout = setTimeout(() => setAiNullPollStopped(true), 180000);
+    return () => clearTimeout(timeout);
   }, [fetchAiAnalysis, aiAnalysis]);
 
   const handleStatusChange = async (newStatus: string) => {
@@ -676,6 +679,28 @@ export function TicketDetail() {
       );
     } finally {
       setUpdatingPriority(false);
+    }
+  };
+
+  const handleCategoryChange = async (newCategory: string) => {
+    if (!ticketNumber) return;
+    try {
+      setUpdatingCategory(true);
+      const res = await fetch(`/manage/api/tickets/${ticketNumber}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: newCategory }),
+      });
+      if (!res.ok) throw new Error("Failed to update category");
+      const data = (await res.json()) as { ticket?: Ticket };
+      setTicket(data.ticket || ({ ...ticket, category: newCategory } as Ticket));
+      toast.success("Category updated");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to update category",
+      );
+    } finally {
+      setUpdatingCategory(false);
     }
   };
 
@@ -994,9 +1019,14 @@ export function TicketDetail() {
       {/* Subject & metadata */}
       <Card>
         <CardContent className="p-4">
-          <h1 className="mb-3 text-xl font-semibold text-foreground">
-            {ticket.subject}
-          </h1>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold text-foreground">
+              {ticket.subject}
+            </h1>
+            <Badge className={`border font-normal ${AI_BADGE_COLORS[ticket.category || "other"] || AI_BADGE_COLORS.other}`}>
+              {getCategoryLabel(ticket.category)}
+            </Badge>
+          </div>
           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <IconUser size={14} />
@@ -1328,6 +1358,38 @@ export function TicketDetail() {
                     Updating...
                   </div>
                 )}
+              </div>
+
+              {/* Category */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Category
+                </label>
+                <Select
+                  value={ticket.category || "other"}
+                  onValueChange={(v) => v && handleCategoryChange(v)}
+                  disabled={updatingCategory}
+                >
+                  <SelectTrigger className="h-8 text-xs cursor-pointer">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TICKET_CATEGORIES.map((cat) => (
+                      <SelectItem key={cat} value={cat} className="cursor-pointer">
+                        {getCategoryLabel(cat)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {updatingCategory && (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <IconLoader size={10} className="animate-spin" />
+                    Updating...
+                  </div>
+                )}
+                <p className="text-[10px] leading-snug text-muted-foreground/70">
+                  Auto-set by AI triage on new tickets; override manually here.
+                </p>
               </div>
 
               <div className="border-t border-border" />

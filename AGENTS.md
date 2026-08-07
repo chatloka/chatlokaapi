@@ -128,7 +128,7 @@ chatlokaapi/
 │   │       ├── monitoring.ts # /stats, /api-logs, /tamper
 │   │       └── notifications.ts # /notifs — notification feed + mark read
 │   ├── mcp/
-│   │   └── index.ts          # MCP server (50 tools, Streamable HTTP)
+│   │   └── index.ts          # MCP server (51 tools, Streamable HTTP)
 │   ├── ai/
 │   │   ├── analyze.ts        # OpenAI structured-output client, prompt, injection heuristics, schema validation
 │   │   └── ticketAiWorkflow.ts # TicketAiWorkflow (WorkflowEntrypoint): load → analyze → store
@@ -235,11 +235,11 @@ chatlokaapi/
 ### MCP (Bearer token required)
 | Method | Path | Description |
 |---|---|---|
-| ALL | `/mcp` | MCP Streamable HTTP endpoint (50 tools) |
+| ALL | `/mcp` | MCP Streamable HTTP endpoint (51 tools) |
 
 ---
 
-## MCP Tools (50 total)
+## MCP Tools (51 total)
 
 ### License Management
 - `get_licenses` — List all licenses
@@ -261,12 +261,13 @@ chatlokaapi/
 - `publish_plugin_version` — Step 2 of release (manual): register uploaded zip as latest (checksum required)
 
 ### Ticket Management (Support)
-- `get_tickets` — List tickets (status/search/sort/pagination + contact badges)
+- `get_tickets` — List tickets (status/category/search/sort/pagination + contact badges)
 - `get_ticket` — Full ticket detail (messages, attachments, participants, merge context, contact)
 - `get_ticket_attachments` — List all attachments across a ticket's messages
 - `reply_ticket` — Send email reply via Resend (threading headers, CC participants)
 - `update_ticket_status` — Change status (open/pending/closed)
 - `update_ticket_priority` — Change priority (low/medium/high)
+- `update_ticket_category` — Change category (pre_sale/installation/bug/customization/feature_request/license/billing/other)
 - `merge_tickets` — Merge tickets into target or new container ticket
 - `get_ticket_stats` — Total/open/pending/closed counts
 - `get_ticket_analytics` — First-response/avg-response, per-weekday/hour (WIB), slow gaps
@@ -316,6 +317,8 @@ chatlokaapi/
 | `licenses` | License records (purchase_code, domain, status, buyer info) |
 | `api_logs` | Request logging (endpoint, status, response_time, IP, user_agent) |
 | `tamper_logs` | File integrity check failures |
+| `tickets` | Support tickets (ticket_number, from_email, subject, status, priority, category, contact_id, message stats) |
+| `ticket_messages` | Ticket thread messages (inbound/outbound, threading headers) |
 | `license_domain_history` | Domain change audit trail |
 | `plugin_versions` | Plugin version registry (slug, version, checksum, download_count) |
 | `plugin_download_logs` | Plugin download history |
@@ -450,7 +453,7 @@ General R2 objects (specs, docs, raw source, custom solutions) live under the `f
 `/api/webhooks/telegram` lives under `/api/*` (already in `run_worker_first`), so it reaches the worker. The bot only reacts to the chat id in `TELEGRAM_ADMIN_CHAT_ID`; other chats are logged as `ignored_chat`. Register webhook via the admin panel (Telegram page → Register Webhook) or the Bot API `setWebhook` with the `X-Telegram-Bot-Api-Secret-Token` header matching `TELEGRAM_WEBHOOK_SECRET`.
 
 ### Ticket AI analysis (Cloudflare Workflows)
-When a new ticket arrives at `/api/webhooks/resend`, the worker fires `TICKET_AI_WORKFLOW.create({ params: { ticket_id } })` inside `executionCtx.waitUntil` (row `ticket_ai_analyses` inserted as `pending` first). The workflow (`src/ai/ticketAiWorkflow.ts`, binding `TICKET_AI_WORKFLOW` → class `TicketAiWorkflow`) runs 4 steps: upsert `processing` + instance id → load ticket + messages (sleeps 10 s and re-reads if the ticket has no messages yet) → OpenAI `gpt-5.4-mini` analysis (`reasoning_effort: low`, structured outputs, retries 2× with 5 s + exponential backoff, 15 min timeout) → store `completed`/`failed`. The UI polls `/manage/api/tickets/:ticketNumber/ai-analysis` every 5 s while status is pending/processing. Guardrails (in `src/ai/analyze.ts`): ticket text is wrapped in `<ticket_data>` delimiters and declared untrusted data in the system prompt; `scanForInjection` flags ≥2 distinct heuristic patterns (stored as `heuristic_injection`); deterministic `validateAnalysis` rejects non-enum values; the model gets no tools. Missing `OPENAI_API_KEY` fails the analyze step gracefully (row → `failed`, UI shows the error).
+When a new ticket arrives at `/api/webhooks/resend`, the worker fires `TICKET_AI_WORKFLOW.create({ params: { ticket_id } })` inside `executionCtx.waitUntil` (row `ticket_ai_analyses` inserted as `pending` first). The workflow (`src/ai/ticketAiWorkflow.ts`, binding `TICKET_AI_WORKFLOW` → class `TicketAiWorkflow`) runs 4 steps: upsert `processing` + instance id → load ticket + messages (sleeps 10 s and re-reads if the ticket has no messages yet) → OpenAI `gpt-5.4-mini` analysis (`reasoning_effort: low`, structured outputs, retries 2× with 5 s + exponential backoff, 15 min timeout) → store `completed`/`failed`. On completion the workflow also auto-sets the ticket's `category` column (enum: pre_sale/installation/bug/customization/feature_request/license/billing/other — shared with the admin panel and MCP `update_ticket_category`; admins can override). The UI polls `/manage/api/tickets/:ticketNumber/ai-analysis` every 5 s while status is pending/processing. Guardrails (in `src/ai/analyze.ts`): ticket text is wrapped in `<ticket_data>` delimiters and declared untrusted data in the system prompt; `scanForInjection` flags ≥2 distinct heuristic patterns (stored as `heuristic_injection`); deterministic `validateAnalysis` rejects non-enum values; the model gets no tools. Missing `OPENAI_API_KEY` fails the analyze step gracefully (row → `failed`, UI shows the error).
 
 ### D1 schema changes not reflected
 Better Auth calls `getMigrations()` before each auth handler request. D1 migrations must be applied via `wrangler d1 migrations apply chatloka`.

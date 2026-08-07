@@ -155,6 +155,10 @@ export class TicketAiWorkflow extends WorkflowEntrypoint<CloudflareBindings, Tic
         estimateCostUsd(analysis.metrics.input_tokens, analysis.metrics.output_tokens),
         ticketId,
       ).run()
+
+      // Auto-categorize the ticket itself (admin can override later).
+      await db.prepare('UPDATE tickets SET category = ?, updated_at = datetime(\'now\') WHERE id = ?')
+        .bind(r.category, ticketId).run()
     })
 
     return { ticket_id: ticketId, status: analysis.refusal ? 'failed' : 'completed' }

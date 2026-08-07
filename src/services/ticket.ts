@@ -10,6 +10,7 @@ export interface Ticket {
   subject: string
   status: string
   priority: string
+  category?: string
   assigned_to: string | null
   last_message_at: string | null
   message_count: number
@@ -71,7 +72,7 @@ export class TicketService {
   async getTicketsPaginated(
     page: number,
     limit: number,
-    options?: { status?: string; search?: string; sort?: string }
+    options?: { status?: string; search?: string; sort?: string; category?: string }
   ): Promise<{ tickets: Ticket[]; total: number }> {
     let query = `SELECT t.*, c.contact_type, c.latest_purchase_code, c.latest_license_type, c.latest_support_until
       FROM tickets t
@@ -120,6 +121,14 @@ export class TicketService {
       const searchParam = `%${options.search}%`
       params.push(searchParam, searchParam, searchParam)
       countParams.push(searchParam, searchParam, searchParam)
+    }
+
+    if (options?.category && options.category !== 'all') {
+      const clause = ' AND category = ?'
+      query += clause
+      countQuery += clause
+      params.push(options.category)
+      countParams.push(options.category)
     }
 
     const orderDir = options?.sort === 'oldest' ? 'ASC' : 'DESC'
@@ -339,6 +348,7 @@ export class TicketService {
   async updateTicket(ticketNumber: string, data: {
     status?: string
     priority?: string
+    category?: string
     assigned_to?: string
     contact_id?: number
   }): Promise<void> {
@@ -352,6 +362,10 @@ export class TicketService {
     if (data.priority) {
       updates.push('priority = ?')
       params.push(data.priority)
+    }
+    if (data.category !== undefined) {
+      updates.push('category = ?')
+      params.push(data.category)
     }
     if (data.assigned_to !== undefined) {
       updates.push('assigned_to = ?')

@@ -2,7 +2,7 @@ import type { CloudflareBindings } from '../types'
 import type { Ticket } from '../services/ticket'
 
 export const AI_MODEL = 'gpt-5.4-mini'
-export const AI_SCHEMA_VERSION = 1
+export const AI_SCHEMA_VERSION = 2
 export const AI_MAX_INPUT_CHARS = 30000
 export const AI_MAX_MESSAGE_CHARS = 6000
 export const AI_MAX_OUTPUT_TOKENS = 2500
@@ -10,13 +10,13 @@ export const AI_INPUT_COST_PER_M = 0.75
 export const AI_OUTPUT_COST_PER_M = 4.5
 
 export const AI_CATEGORIES = [
-  'bug',
-  'technical',
-  'suggestion',
-  'feature_request',
-  'billing',
-  'license_activation',
+  'pre_sale',
   'installation',
+  'bug',
+  'customization',
+  'feature_request',
+  'license',
+  'billing',
   'other',
 ] as const
 export type AiCategory = (typeof AI_CATEGORIES)[number]
@@ -129,7 +129,7 @@ HARD RULES:
 FIELD GUIDANCE:
 - summary: 2-3 sentences covering what the customer reports and what they need.
 - key_points: 3-5 concise bullet points (one short sentence each).
-- category: pick exactly ONE of [bug, technical, suggestion, feature_request, billing, license_activation, installation, other]. bug = broken behavior/error; technical = technical setup/config question; suggestion = improvement idea; feature_request = wants a new capability; billing = payment/invoice; license_activation = license activate/transfer/domain issues; installation = install/update/uninstall problems; other = anything else.
+- category: pick exactly ONE of [pre_sale, installation, bug, customization, feature_request, license, billing, other]. pre_sale = pre-purchase question, comparing alternatives, asking about features before buying; installation = install/update/uninstall problems; bug = broken behavior/error; customization = wants the product modified/adapted to their needs; feature_request = wants a new capability added; license = license activation/transfer/domain issues or renewal; billing = payment, invoice, refund issues; other = anything else.
 - priority: low (informational, no blocker) / medium (impacting work but workaround exists) / high (blocked, urgent, angry customer, license unusable, site down).
 - sentiment: how the customer feels: positive / neutral / negative / frustrated.
 - suggested_steps: 3-6 concrete next actions for the support agent (e.g. check X, reissue license, reproduce steps).

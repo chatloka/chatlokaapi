@@ -8,8 +8,11 @@ import { ContactService } from "../services/contact";
 import { EnvatoService } from "../services/envato";
 import { TelegramBotService } from "../telegram/service";
 import { FileManagerService, normalizeFolder } from "../services/fileManager";
+import { AI_CATEGORIES } from "../ai/analyze";
 import { broadcastRealtime } from "../realtime/hub";
 import type { CloudflareBindings } from "../types";
+
+const TICKET_CATEGORIES = AI_CATEGORIES;
 
 export interface AdminVariables {
   session: {
@@ -804,12 +807,14 @@ adminRoutes.get("/tickets", async (c) => {
   const page = parseInt(c.req.query("page") || "1", 10);
   const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 100);
   const status = c.req.query("status") || "all";
+  const category = c.req.query("category") || "all";
   const search = c.req.query("search") || "";
   const sort = c.req.query("sort") || "newest";
 
   const ticketService = new TicketService(db);
   const { tickets, total } = await ticketService.getTicketsPaginated(page, limit, {
     status: status !== "all" ? status : undefined,
+    category: category !== "all" ? category : undefined,
     search: search || undefined,
     sort,
   });
@@ -1321,6 +1326,7 @@ adminRoutes.patch("/tickets/:ticketNumber", async (c) => {
   const body = await c.req.json<{
     status?: string;
     priority?: string;
+    category?: string;
     assigned_to?: string;
   }>();
 
@@ -1329,6 +1335,10 @@ adminRoutes.patch("/tickets/:ticketNumber", async (c) => {
 
   if (!ticket) {
     return c.json({ error: "Ticket not found" }, 404);
+  }
+
+  if (body.category !== undefined && !(TICKET_CATEGORIES as readonly string[]).includes(body.category)) {
+    return c.json({ error: "Invalid category" }, 400);
   }
 
   await ticketService.updateTicket(ticketNumber, body);

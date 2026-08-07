@@ -783,19 +783,21 @@ export function createMcpServer(env: McpEnv) {
   server.registerTool(
     "get_tickets",
     {
-      description: "List support tickets with optional filtering. Shows ticket number, customer email, subject, status, priority, message count, contact badge info (lead/customer + support status), and last message time.",
+      description: "List support tickets with optional filtering. Shows ticket number, customer email, subject, status, priority, category, message count, contact badge info (lead/customer + support status), and last message time.",
       inputSchema: z.object({
         status: z.enum(["all", "open", "pending", "closed", "merged"]).optional().describe("Filter by ticket status, defaults to all (excludes merged unless 'merged' is chosen)"),
+        category: z.enum(["all", "pre_sale", "installation", "bug", "customization", "feature_request", "license", "billing", "other"]).optional().describe("Filter by ticket category (pre_sale = pre-purchase question, installation, bug, customization, feature_request, license, billing, other), defaults to all"),
         search: z.string().optional().describe("Search across ticket number, sender email, and subject"),
         sort: z.enum(["newest", "oldest"]).optional().describe("Sort by last message time, defaults to newest"),
         page: z.number().optional().describe("Page number, defaults to 1"),
         limit: z.number().optional().describe("Results per page, defaults to 50, max 200"),
       }),
     },
-    async ({ status, search, sort, page, limit }) => {
+    async ({ status, category, search, sort, page, limit }) => {
       const ticketService = new TicketService(env.DB)
       const result = await ticketService.getTicketsPaginated(page || 1, Math.min(limit || 50, 200), {
         status: status === "all" ? undefined : status,
+        category,
         search,
         sort,
       })
@@ -990,6 +992,25 @@ export function createMcpServer(env: McpEnv) {
 
       await ticketService.updateTicket(ticket_number, { priority })
       return text(JSON.stringify({ success: true, ticket_number, old_priority: ticket.priority, new_priority: priority }, null, 2))
+    }
+  )
+
+  server.registerTool(
+    "update_ticket_category",
+    {
+      description: "Change a ticket's category: pre_sale (pre-purchase question), installation, bug, customization, feature_request, license, billing, or other. Categories keep the support inbox organized; the AI triage auto-sets this on new tickets and you can override it here.",
+      inputSchema: z.object({
+        ticket_number: z.string().describe("The ticket number (e.g. TICKET-00002)"),
+        category: z.enum(["pre_sale", "installation", "bug", "customization", "feature_request", "license", "billing", "other"]).describe("New ticket category"),
+      }),
+    },
+    async ({ ticket_number, category }) => {
+      const ticketService = new TicketService(env.DB)
+      const ticket = await ticketService.getTicketByNumber(ticket_number)
+      if (!ticket) return text(`Ticket not found: ${ticket_number}`)
+
+      await ticketService.updateTicket(ticket_number, { category })
+      return text(JSON.stringify({ success: true, ticket_number, old_category: ticket.category || "other", new_category: category }, null, 2))
     }
   )
 

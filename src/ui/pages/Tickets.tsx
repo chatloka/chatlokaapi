@@ -43,6 +43,7 @@ import {
 } from "@tabler/icons-react"
 import { CardTableSkeleton } from "@/components/Skeletons"
 import { ContactTypeBadge } from "@/components/ContactBadges"
+import { getCategoryBadgeClass, getCategoryLabel, TICKET_CATEGORIES } from "@/lib/ticketCategories"
 
 interface Ticket {
   id: number
@@ -54,6 +55,7 @@ interface Ticket {
   subject: string
   status: string
   priority: string
+  category?: string | null
   assigned_to: string | null
   last_message_at: string | null
   message_count: number
@@ -125,6 +127,14 @@ function getStatusBadge(status: string) {
   }
 }
 
+function getCategoryBadge(category: string | null | undefined) {
+  return (
+    <Badge className={`${getCategoryBadgeClass(category)} cursor-pointer`}>
+      {getCategoryLabel(category)}
+    </Badge>
+  )
+}
+
 function getPriorityBadge(priority: string) {
   switch (priority) {
     case "high":
@@ -164,6 +174,7 @@ export function Tickets() {
   const [stats, setStats] = useState<TicketStats>({ total: 0, open: 0, pending: 0, closed: 0 })
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [categoryFilter, setCategoryFilter] = useState("all")
   const [sort, setSort] = useState("newest")
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 })
@@ -177,6 +188,7 @@ export function Tickets() {
         sort,
       })
       if (statusFilter !== "all") params.set("status", statusFilter)
+      if (categoryFilter !== "all") params.set("category", categoryFilter)
       if (search) params.set("search", search)
 
       const res = await fetch(`/manage/api/tickets?${params}`, { credentials: "include" })
@@ -190,7 +202,7 @@ export function Tickets() {
     } finally {
       setLoading(false)
     }
-  }, [page, statusFilter, sort, search])
+  }, [page, statusFilter, categoryFilter, sort, search])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -206,7 +218,7 @@ export function Tickets() {
 
   useEffect(() => {
     fetchTickets()
-  }, [page, statusFilter, sort, fetchTickets])
+  }, [page, statusFilter, categoryFilter, sort, fetchTickets])
 
   useEffect(() => {
     fetchStats()
@@ -340,6 +352,24 @@ export function Tickets() {
               </Select>
             </div>
 
+            {/* Category Filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">Category:</span>
+              <Select value={categoryFilter} onValueChange={(val) => { if (val) { setCategoryFilter(val); setPage(1) } }}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {TICKET_CATEGORIES.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {getCategoryLabel(cat)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Sort */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground whitespace-nowrap">Sort:</span>
@@ -392,8 +422,9 @@ export function Tickets() {
                       <span className="font-mono text-xs font-medium text-primary">
                         {ticket.ticket_number}
                       </span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {getStatusBadge(ticket.status)}
+                        {getCategoryBadge(ticket.category)}
                         {getPriorityBadge(ticket.priority)}
                       </div>
                     </div>
@@ -430,6 +461,7 @@ export function Tickets() {
                     <TableHead>From</TableHead>
                     <TableHead>Subject</TableHead>
                     <TableHead className="w-[100px]">Status</TableHead>
+                    <TableHead className="w-[140px]">Category</TableHead>
                     <TableHead className="w-[100px]">Priority</TableHead>
                     <TableHead className="w-[80px] text-center">
                       <IconMessageCircle className="h-4 w-4 mx-auto" />
@@ -468,6 +500,7 @@ export function Tickets() {
                         </span>
                       </TableCell>
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
+                      <TableCell>{getCategoryBadge(ticket.category)}</TableCell>
                       <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
                       <TableCell className="text-center">
                         <span className="text-sm text-muted-foreground">
