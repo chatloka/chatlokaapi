@@ -187,11 +187,25 @@ POST /api/app/check-update
     "file_size": 15728640,
     "released_at": "2026-08-05T10:00:00Z",
     "breaking_changes": ["Removed deprecated API endpoint /api/old"],
-    "min_php_version": "8.2"
+    "min_php_version": "8.2",
+    "versions": [
+      {
+        "version": "1.3.0",
+        "changelog": "# Changelog\n\n## v1.3.0\n\n- Feature X\n- Bug fix Y",
+        "released_at": "2026-08-05 10:00:00",
+        "file_size": 15728640,
+        "min_php_version": "8.2",
+        "checksum": "sha256hex...",
+        "is_latest": true,
+        "breaking_changes": ["Removed deprecated API endpoint /api/old"]
+      }
+    ]
   },
   "signature": "<RSA-SHA256 signature>"
 }
 ```
+
+`versions` is a signed array of all published releases (newest first, max 25). Fields mirror the `app_versions` rows exactly. Backward compatible: clients that predate this key simply ignore it.
 
 **Response (no update):**
 ```json
@@ -199,7 +213,8 @@ POST /api/app/check-update
   "data": {
     "has_update": false,
     "current_version": "1.2.0",
-    "latest_version": "1.2.0"
+    "latest_version": "1.2.0",
+    "versions": []
   },
   "signature": "<RSA-SHA256 signature>"
 }

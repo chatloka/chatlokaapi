@@ -32,6 +32,13 @@ export class AppUpdateService {
     return (result.results || []) as unknown as AppVersion[]
   }
 
+  async getRecentVersions(limit: number): Promise<AppVersion[]> {
+    const result = await this.db.prepare(
+      'SELECT * FROM app_versions ORDER BY released_at DESC LIMIT ?'
+    ).bind(limit).all()
+    return (result.results || []) as unknown as AppVersion[]
+  }
+
   async getVersionsPaginated(page: number, limit: number, search?: string): Promise<{ versions: AppVersion[]; total: number }> {
     let query = 'SELECT * FROM app_versions WHERE 1=1'
     let countQuery = 'SELECT COUNT(*) as total FROM app_versions WHERE 1=1'

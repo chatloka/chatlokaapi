@@ -986,15 +986,33 @@ app.post('/api/app/check-update', requireValidLicense, async (c) => {
         has_update: false,
         current_version,
         latest_version: current_version,
+        versions: [],
       }))
     }
 
     const hasUpdate = appUpdateService.compareVersions(latest.version, current_version) > 0
 
+    // Full published release history (newest first, max 25) so the client can
+    // render a per-version details modal without extra round-trips.
+    const recentVersions = await appUpdateService.getRecentVersions(25)
+    const versions = recentVersions.map((v) => ({
+      version: v.version,
+      changelog: v.changelog,
+      released_at: v.released_at,
+      file_size: v.file_size,
+      min_php_version: v.min_php_version,
+      checksum: v.checksum,
+      is_latest: v.is_latest === 1,
+      breaking_changes: v.breaking_changes
+        ? (() => { try { return JSON.parse(v.breaking_changes) } catch { return [] } })()
+        : [],
+    }))
+
     const responseData: Record<string, unknown> = {
       has_update: hasUpdate,
       current_version,
       latest_version: latest.version,
+      versions,
     }
 
     if (hasUpdate) {
