@@ -6,7 +6,7 @@ import { NotificationService } from "../services/notification";
 import { ResendService } from "../services/resend";
 import { ContactService } from "../services/contact";
 import { EnvatoService } from "../services/envato";
-import { TelegramBotService } from "../services/telegram";
+import { TelegramBotService } from "../telegram/service";
 import { FileManagerService, normalizeFolder } from "../services/fileManager";
 import { broadcastRealtime } from "../realtime/hub";
 import type { CloudflareBindings } from "../types";

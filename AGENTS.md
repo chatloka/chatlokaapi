@@ -107,8 +107,24 @@ chatlokaapi/
 │   │   ├── license.ts        # LicenseService (D1 CRUD + tamper detection)
 │   │   ├── plugin.ts         # PluginService (D1 + R2)
 │   │   ├── fileManager.ts    # FileManagerService (R2 list/folder/delete/upload)
-│   │   ├── telegram.ts       # Telegram bot (Bot API client + TelegramBotService)
+│   │   ├── telegram.ts       # (removed — moved to src/telegram/)
 │   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens)
+│   ├── telegram/             # Telegram bot — split per-tool modules (MCP parity)
+│   │   ├── service.ts        # TelegramBotService: webhook entry, registry dispatch, chat-state persistence
+│   │   ├── botApi.ts         # Telegram API client + types + helpers (escapeHtml, inlineKeyboard, parseCallbackData…)
+│   │   ├── types.ts          # BotToolKit, BotCtx, ChatState, TelegramTool registry interfaces
+│   │   ├── menu.ts           # /start menu text + keyboard (composed from tools)
+│   │   ├── replyFlow.ts      # Multi-step reply drafts (text + attachments → Resend email)
+│   │   ├── notifications.ts  # Outbound pushes: notifyTicketEvent, notifyStatusChange
+│   │   └── tools/            # One file per domain; each exports a TelegramTool
+│   │       ├── tickets.ts    # /ticket, /unread, history, attachments, status, priority
+│   │       ├── licenses.ts   # /licenses, /license, /verify, /create-license, domain/status mgmt
+│   │       ├── plugins.ts    # /plugins, /plugin, versions, download links, download logs
+│   │       ├── contacts.ts   # /contacts, /contact, + purchase code (Envato verified)
+│   │       ├── releases.ts   # /releases, download links, app update logs
+│   │       ├── files.ts      # /files — R2 File Manager browse + download links
+│   │       ├── monitoring.ts # /stats, /api-logs, /tamper
+│   │       └── notifications.ts # /notifs — notification feed + mark read
 │   ├── mcp/
 │   │   └── index.ts          # MCP server (50 tools, Streamable HTTP)
 │   └── ui/
@@ -364,6 +380,14 @@ chatlokaapi/
 - Admin routes use session middleware: `c.get("session")` returns `{ user, session }` (NOT `{ session: { user } }`).
 - D1 queries use `c.env.DB.prepare().bind().all()` pattern.
 - Error responses: `c.json({ error: { message: "..." } }, statusCode)`.
+
+### Telegram Bot (src/telegram/)
+- The bot is a registry of `TelegramTool` modules (one file per domain in `src/telegram/tools/`). `service.ts` merges their `commands` / `callbacks` / `prompts` / `menuCommands` / `menuButtons` into dispatch maps — never add new cases to `service.ts` directly; add a tool file instead.
+- Tools receive a `BotCtx { kit, chatId, reply, edit, log }`; `kit` is the `BotToolKit` (env, db, bucket, api + all services + chat-state/log helpers). Do NOT instantiate services inside tools — use the kit.
+- Callback data is `action:part1:part2` — parse with `parseCallbackData`; every inline button row should include a way back (usually `menu`).
+- Multi-step typed-input flows (e.g. license domain change, reply drafts) store a `ChatState` via `kit.setChatState(chatId, { action, data })`; the prompt handler is looked up by `action` and receives the raw message. Always `clearChatState` when the flow ends (also on `cancel`).
+- All text sent with `parse_mode: 'HTML'` must be escaped via `escapeHtml` (user-controlled values included).
+- Only the chat in `TELEGRAM_ADMIN_CHAT_ID` is allowed; other chats are logged `ignored_chat`.
 
 ### Frontend (React)
 - **Always use `@tabler/icons-react`** for icons. Do NOT use `lucide-react`.
