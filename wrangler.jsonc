@@ -62,6 +62,13 @@
       }
     ]
   },
+  "workflows": [
+    {
+      "name": "ticket-ai-analysis",
+      "binding": "TICKET_AI_WORKFLOW",
+      "class_name": "TicketAiWorkflow"
+    }
+  ],
   "migrations": [
     {
       "tag": "v1-realtime",

@@ -928,6 +928,67 @@ adminRoutes.get("/tickets/:ticketNumber", async (c) => {
   });
 });
 
+// AI triage analysis for a ticket (polled by the UI while pending/processing).
+adminRoutes.get("/tickets/:ticketNumber/ai-analysis", async (c) => {
+  const db = c.env.DB;
+  const ticketNumber = c.req.param("ticketNumber");
+
+  const ticketService = new TicketService(db);
+  const ticket = await ticketService.getTicketByNumber(ticketNumber);
+  if (!ticket) {
+    return c.json({ error: "Ticket not found" }, 404);
+  }
+
+  const row = await db
+    .prepare("SELECT * FROM ticket_ai_analyses WHERE ticket_id = ?")
+    .bind(ticket.id)
+    .first<Record<string, unknown> | null>();
+
+  if (!row) {
+    return c.json({ analysis: null });
+  }
+
+  const parseArray = (v: unknown): string[] => {
+    if (typeof v !== "string" || !v) return [];
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+
+  return c.json({
+    analysis: {
+      id: row.id,
+      ticket_id: row.ticket_id,
+      status: row.status,
+      workflow_instance_id: row.workflow_instance_id,
+      model: row.model,
+      schema_version: row.schema_version,
+      summary: row.summary,
+      category: row.category,
+      priority: row.priority,
+      sentiment: row.sentiment,
+      key_points: parseArray(row.key_points),
+      suggested_steps: parseArray(row.suggested_steps),
+      tags: parseArray(row.tags),
+      confidence: row.confidence,
+      injection_detected: Number(row.injection_detected) === 1,
+      injection_evidence: row.injection_evidence,
+      heuristic_injection: Number(row.heuristic_injection) === 1,
+      refusal: row.refusal,
+      error: row.error,
+      input_tokens: row.input_tokens,
+      output_tokens: row.output_tokens,
+      latency_ms: row.latency_ms,
+      cost_usd: row.cost_usd,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    },
+  });
+});
+
 // Merge tickets: move source tickets into a target ticket (by number) or into
 // a freshly created ticket. Sources are marked 'merged' and their owners are
 // added as participants so replies are CC'd to everyone.

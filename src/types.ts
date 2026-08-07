@@ -25,6 +25,8 @@ export interface CloudflareBindings {
   TELEGRAM_ADMIN_CHAT_ID?: number | string
   TELEGRAM_WEBHOOK_SECRET?: string
   TELEGRAM_BOT_USERNAME?: string
+  OPENAI_API_KEY?: string
+  TICKET_AI_WORKFLOW: Workflow<{ ticket_id: number }>
   ASSETS: Fetcher
   RL_VALIDATE: RateLimit
   RL_ACTIVATE: RateLimit

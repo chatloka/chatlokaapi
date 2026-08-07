@@ -44,6 +44,8 @@
 | **D1** | — | SQLite database on Cloudflare (binding: `DB`) |
 | **R2** | — | Object storage for plugin + app release .zip files (binding: `PLUGINS_BUCKET`) |
 | **MCP SDK** | 2.0+ | Model Context Protocol server (`@modelcontextprotocol/server` + `@modelcontextprotocol/hono`) |
+| **Cloudflare Workflows** | — | Durable AI pipeline (`ticket-ai-analysis` binding `TICKET_AI_WORKFLOW`) |
+| **OpenAI API** | gpt-5.4-mini | Ticket AI triage (structured outputs, direct fetch — no SDK) |
 | **TypeScript** | 6.0 | Language |
 | **Wrangler** | — | CLI, build, deploy |
 
@@ -127,6 +129,9 @@ chatlokaapi/
 │   │       └── notifications.ts # /notifs — notification feed + mark read
 │   ├── mcp/
 │   │   └── index.ts          # MCP server (50 tools, Streamable HTTP)
+│   ├── ai/
+│   │   ├── analyze.ts        # OpenAI structured-output client, prompt, injection heuristics, schema validation
+│   │   └── ticketAiWorkflow.ts # TicketAiWorkflow (WorkflowEntrypoint): load → analyze → store
 │   └── ui/
 │       ├── main.tsx           # React entry (BrowserRouter, Toaster)
 │       ├── App.tsx            # Routes definition
@@ -225,7 +230,7 @@ chatlokaapi/
 | POST | `/manage/api/telegram/set-webhook` | Register `{base}/api/webhooks/telegram` |
 | POST | `/manage/api/telegram/delete-webhook` | Remove the Telegram webhook |
 | POST | `/manage/api/telegram/test` | Send a test message to the admin chat |
-| GET | `/manage/api/mcp-servers` | MCP server API keys |
+| GET | `/manage/api/tickets/:ticketNumber/ai-analysis` | AI triage result for a ticket (polled by UI; `analysis: null` if none) |
 
 ### MCP (Bearer token required)
 | Method | Path | Description |
@@ -319,6 +324,7 @@ chatlokaapi/
 | `telegram_bot_logs` | Telegram bot action audit trail |
 | `telegram_chat_state` | Per-chat multi-step state (reply flow) |
 | `mcp_logs` | MCP request/response audit logs (method, tool, params, response, client, session, IP) |
+| `ticket_ai_analyses` | AI triage per ticket (status pending→processing→completed/failed, summary, category, priority, sentiment, key_points/suggested_steps/tags JSON, confidence, injection flags, tokens/cost telemetry) |
 | `user` | Better Auth users |
 | `session` | Better Auth sessions |
 | `account` | Better Auth accounts |
@@ -338,6 +344,7 @@ chatlokaapi/
 | `MCP_API_KEY` | Bearer token for MCP endpoint authentication |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (`@chatlokaapibot`) |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret token sent in `X-Telegram-Bot-Api-Secret-Token` header |
+| `OPENAI_API_KEY` | OpenAI API key for ticket AI triage (`gpt-5.4-mini`). Optional — analysis steps fail gracefully without it |
 
 ---
 
@@ -441,6 +448,9 @@ General R2 objects (specs, docs, raw source, custom solutions) live under the `f
 
 ### Telegram webhook not firing
 `/api/webhooks/telegram` lives under `/api/*` (already in `run_worker_first`), so it reaches the worker. The bot only reacts to the chat id in `TELEGRAM_ADMIN_CHAT_ID`; other chats are logged as `ignored_chat`. Register webhook via the admin panel (Telegram page → Register Webhook) or the Bot API `setWebhook` with the `X-Telegram-Bot-Api-Secret-Token` header matching `TELEGRAM_WEBHOOK_SECRET`.
+
+### Ticket AI analysis (Cloudflare Workflows)
+When a new ticket arrives at `/api/webhooks/resend`, the worker fires `TICKET_AI_WORKFLOW.create({ params: { ticket_id } })` inside `executionCtx.waitUntil` (row `ticket_ai_analyses` inserted as `pending` first). The workflow (`src/ai/ticketAiWorkflow.ts`, binding `TICKET_AI_WORKFLOW` → class `TicketAiWorkflow`) runs 4 steps: upsert `processing` + instance id → load ticket + messages (sleeps 10 s and re-reads if the ticket has no messages yet) → OpenAI `gpt-5.4-mini` analysis (`reasoning_effort: low`, structured outputs, retries 2× with 5 s + exponential backoff, 15 min timeout) → store `completed`/`failed`. The UI polls `/manage/api/tickets/:ticketNumber/ai-analysis` every 5 s while status is pending/processing. Guardrails (in `src/ai/analyze.ts`): ticket text is wrapped in `<ticket_data>` delimiters and declared untrusted data in the system prompt; `scanForInjection` flags ≥2 distinct heuristic patterns (stored as `heuristic_injection`); deterministic `validateAnalysis` rejects non-enum values; the model gets no tools. Missing `OPENAI_API_KEY` fails the analyze step gracefully (row → `failed`, UI shows the error).
 
 ### D1 schema changes not reflected
 Better Auth calls `getMigrations()` before each auth handler request. D1 migrations must be applied via `wrangler d1 migrations apply chatloka`.

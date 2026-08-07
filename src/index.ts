@@ -32,6 +32,7 @@ import type { Context } from 'hono'
 
 // Durable Object classes must be exported from the worker entrypoint.
 export { RealtimeHub } from './realtime/hub'
+export { TicketAiWorkflow } from './ai/ticketAiWorkflow'
 import { broadcastRealtime } from './realtime/hub'
 
 const app = new Hono<{ Bindings: CloudflareBindings; Variables: LicenseContextVariables }>()
@@ -1739,6 +1740,28 @@ app.post('/api/webhooks/resend', async (c) => {
     }
 
     const notifyType = wasReopened ? 'ticket_reopened' : (isNewTicket ? 'ticket_new' : 'message_inbound')
+
+    // AI triage (new tickets only): enqueue the durable analysis workflow.
+    // Fire-and-forget — the UI polls /manage/api/tickets/:num/ai-analysis.
+    if (isNewTicket) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            const existing = await db.prepare('SELECT id FROM ticket_ai_analyses WHERE ticket_id = ?').bind(ticket.id).first()
+            if (existing) return
+            await db.prepare(
+              "INSERT INTO ticket_ai_analyses (ticket_id, status, created_at, updated_at) VALUES (?, 'pending', datetime('now'), datetime('now'))"
+            ).bind(ticket.id).run()
+            await c.env.TICKET_AI_WORKFLOW.create({ params: { ticket_id: ticket.id } })
+          } catch (aiErr) {
+            console.error('[Resend Webhook] Failed to enqueue AI analysis:', aiErr)
+            await db.prepare(
+              "UPDATE ticket_ai_analyses SET status = 'failed', error = ?, updated_at = datetime('now') WHERE ticket_id = ?"
+            ).bind(aiErr instanceof Error ? aiErr.message : String(aiErr), ticket.id).run()
+          }
+        })(),
+      )
+    }
 
     // Broadcast realtime notification to admin clients
     const notificationService = new NotificationService(db)

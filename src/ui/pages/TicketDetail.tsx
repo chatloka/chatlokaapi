@@ -24,6 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CardTableSkeleton } from "@/components/Skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MergeTicketDialog } from "@/components/MergeTicketDialog";
 import { ContactTypeBadge, SupportStatusBadge } from "@/components/ContactBadges";
 import { toast } from "sonner";
@@ -57,6 +58,9 @@ import {
   IconKey,
   IconShieldCheck,
   IconPlus,
+  IconAlertTriangle,
+  IconSparkles,
+  IconCpu,
 } from "@tabler/icons-react";
 
 interface Ticket {
@@ -119,9 +123,7 @@ interface TicketContactPurchase {
   license_type: "regular" | "extended";
   support_until: string | null;
   item_name: string | null;
-}
-
-interface TicketContact {
+}interface TicketContact {
   id: number;
   email: string;
   name: string | null;
@@ -131,6 +133,34 @@ interface TicketContact {
   latest_license_type: "regular" | "extended" | null;
   latest_support_until: string | null;
   purchases: TicketContactPurchase[];
+}
+
+interface AiAnalysis {
+  id: number;
+  ticket_id: number;
+  status: "pending" | "processing" | "completed" | "failed";
+  workflow_instance_id: string | null;
+  model: string | null;
+  schema_version: number | null;
+  summary: string | null;
+  category: string | null;
+  priority: string | null;
+  sentiment: string | null;
+  key_points: string[];
+  suggested_steps: string[];
+  tags: string[];
+  confidence: number | null;
+  injection_detected: boolean;
+  injection_evidence: string | null;
+  heuristic_injection: boolean;
+  refusal: string | null;
+  error: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  latency_ms: number | null;
+  cost_usd: number | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 function toWIB(dateStr: string): string {
@@ -265,6 +295,239 @@ function formatSender(ticket: Ticket): string {
     : ticket.from_email;
 }
 
+// ---------------------------------------------------------------------------
+// AI Ticket Analysis card (auto-triage summary rendered from ticket_ai_analyses)
+// ---------------------------------------------------------------------------
+
+const AI_CATEGORY_LABELS: Record<string, string> = {
+  bug: "Bug",
+  technical: "Technical",
+  suggestion: "Suggestion",
+  feature_request: "Feature Request",
+  billing: "Billing",
+  license_activation: "License Activation",
+  installation: "Installation",
+  other: "Other",
+};
+
+const AI_SENTIMENT_LABELS: Record<string, string> = {
+  positive: "Positive",
+  neutral: "Neutral",
+  negative: "Negative",
+  frustrated: "Frustrated",
+};
+
+const AI_BADGE_COLORS: Record<string, string> = {
+  bug: "border-red-500/30 bg-red-500/10 text-red-400",
+  feature_request: "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  suggestion: "border-violet-500/30 bg-violet-500/10 text-violet-400",
+  technical: "border-cyan-500/30 bg-cyan-500/10 text-cyan-400",
+  billing: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  license_activation: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  installation: "border-pink-500/30 bg-pink-500/10 text-pink-400",
+  other: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300",
+  low: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300",
+  medium: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  high: "border-red-500/30 bg-red-500/10 text-red-400",
+  positive: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  neutral: "border-zinc-500/30 bg-zinc-500/10 text-zinc-300",
+  negative: "border-orange-500/30 bg-orange-500/10 text-orange-400",
+  frustrated: "border-red-500/30 bg-red-500/10 text-red-400",
+};
+
+function AiAnalysisCard({ analysis }: { analysis: AiAnalysis }) {
+  const { status } = analysis;
+
+  if (status === "pending" || status === "processing") {
+    return (
+      <Card className="border-primary/30">
+        <CardContent className="p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <IconRobot size={16} className="text-primary" />
+              AI Ticket Analysis
+            </div>
+            <Badge
+              variant="outline"
+              className="gap-1 border-primary/30 bg-primary/10 text-primary"
+            >
+              <IconLoader size={11} className="animate-spin" />
+              {status === "pending" ? "Queued" : "Analyzing…"}
+            </Badge>
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (status === "failed") {
+    return (
+      <Card className="border-red-500/30">
+        <CardContent className="p-4">
+          <div className="mb-1 flex items-center gap-2 text-sm font-medium text-foreground">
+            <IconRobot size={16} className="text-red-400" />
+            AI Ticket Analysis
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {analysis.refusal
+              ? `Analysis refused by the model: ${analysis.refusal}`
+              : analysis.error
+                ? `Analysis failed: ${analysis.error}`
+                : "Analysis failed."}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const showInjectionWarning =
+    analysis.injection_detected || analysis.heuristic_injection;
+
+  return (
+    <Card className="border-primary/20">
+      <CardContent className="p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <IconRobot size={16} className="text-primary" />
+            AI Ticket Analysis
+            <Badge
+              variant="outline"
+              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+            >
+              <IconSparkles size={11} />
+              Completed
+            </Badge>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            {analysis.model && (
+              <span className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                {analysis.model}
+              </span>
+            )}
+            {analysis.confidence !== null && analysis.confidence !== undefined && (
+              <span title={`Confidence ${Math.round(analysis.confidence * 100)}%`}>
+                Confidence {Math.round(analysis.confidence * 100)}%
+              </span>
+            )}
+          </div>
+        </div>
+
+        {showInjectionWarning && (
+          <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+            <IconAlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div>
+              <b>Possible prompt injection detected</b> — the email contains text
+              that looks like instructions aimed at an AI. The analysis below may
+              be unreliable; verify manually.
+              {analysis.injection_evidence && (
+                <div className="mt-0.5 font-mono text-[10px] opacity-80">
+                  {analysis.injection_evidence}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {analysis.summary && (
+          <p className="mb-3 text-sm leading-relaxed text-foreground/90">
+            {analysis.summary}
+          </p>
+        )}
+
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {analysis.category && (
+            <Badge className={`border font-normal ${AI_BADGE_COLORS[analysis.category] || AI_BADGE_COLORS.other}`}>
+              {AI_CATEGORY_LABELS[analysis.category] || analysis.category}
+            </Badge>
+          )}
+          {analysis.priority && (
+            <Badge className={`border font-normal ${AI_BADGE_COLORS[analysis.priority] || ""}`}>
+              Priority: {analysis.priority.toUpperCase()}
+            </Badge>
+          )}
+          {analysis.sentiment && (
+            <Badge className={`border font-normal ${AI_BADGE_COLORS[analysis.sentiment] || ""}`}>
+              {AI_SENTIMENT_LABELS[analysis.sentiment] || analysis.sentiment}
+            </Badge>
+          )}
+        </div>
+
+        {analysis.key_points.length > 0 && (
+          <div className="mb-3">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Key points
+            </div>
+            <ul className="space-y-1 text-sm text-foreground/90">
+              {analysis.key_points.map((point, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <IconCircleCheck size={14} className="mt-0.5 shrink-0 text-emerald-500" />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {analysis.suggested_steps.length > 0 && (
+          <div className="mb-3">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Suggested next steps
+            </div>
+            <ul className="space-y-1 text-sm text-foreground/90">
+              {analysis.suggested_steps.map((step, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <IconCpu size={14} className="mt-0.5 shrink-0 text-primary" />
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {analysis.tags.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {analysis.tags.map((tag, i) => (
+              <span
+                key={i}
+                className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {(analysis.input_tokens !== null ||
+          analysis.output_tokens !== null ||
+          analysis.cost_usd !== null) && (
+          <div className="mt-2 flex flex-wrap gap-3 border-t border-border pt-2 text-[11px] text-muted-foreground">
+            {analysis.input_tokens !== null && (
+              <span>{analysis.input_tokens.toLocaleString()} in</span>
+            )}
+            {analysis.output_tokens !== null && (
+              <span>{analysis.output_tokens.toLocaleString()} out</span>
+            )}
+            {analysis.latency_ms !== null && (
+              <span>{(analysis.latency_ms / 1000).toFixed(1)}s</span>
+            )}
+            {analysis.cost_usd !== null && (
+              <span>${analysis.cost_usd.toFixed(4)}</span>
+            )}
+            {analysis.schema_version !== null && (
+              <span>schema v{analysis.schema_version}</span>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function TicketDetail() {
   const { ticketNumber } = useParams<{ ticketNumber: string }>();
   const navigate = useNavigate();
@@ -296,6 +559,7 @@ export function TicketDetail() {
   const [updatingPriority, setUpdatingPriority] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState("");
+  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(null);
 
   const isReplyDirty =
     replyOpen &&
@@ -343,6 +607,33 @@ export function TicketDetail() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const fetchAiAnalysis = useCallback(async () => {
+    if (!ticketNumber) return;
+    try {
+      const res = await fetch(
+        `/manage/api/tickets/${ticketNumber}/ai-analysis`,
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as { analysis?: AiAnalysis | null };
+      setAiAnalysis(data.analysis || null);
+    } catch {
+      // silent — keep last state while polling
+    }
+  }, [ticketNumber]);
+
+  useEffect(() => {
+    fetchAiAnalysis();
+  }, [fetchAiAnalysis, aiAnalysis?.status]);
+
+  useEffect(() => {
+    const isActive =
+      aiAnalysis !== null &&
+      (aiAnalysis.status === "pending" || aiAnalysis.status === "processing");
+    if (!isActive) return;
+    const interval = setInterval(fetchAiAnalysis, 5000);
+    return () => clearInterval(interval);
+  }, [fetchAiAnalysis, aiAnalysis]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!ticketNumber) return;
@@ -756,6 +1047,11 @@ export function TicketDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {/* AI Ticket Analysis (auto-triage: summary, category, priority, sentiment) */}
+      {aiAnalysis && (
+        <AiAnalysisCard analysis={aiAnalysis} />
+      )}
 
       {/* Main content: messages + sidebar */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_300px]">
