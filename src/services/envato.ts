@@ -5,14 +5,19 @@ const DEFAULT_ENVATO_API_URL = 'https://api.envato.com/v3/market'
 export class EnvatoService {
   private token: string
   private apiUrl: string
+  private allowTestCodes: boolean
 
   constructor(env: CloudflareBindings) {
     this.token = env.ENVATO_PERSONAL_TOKEN
     this.apiUrl = (env.ENVATO_API_URL || DEFAULT_ENVATO_API_URL).replace(/\/+$/, '')
+    // Test/dev/demo purchase codes only ever return mock data outside of
+    // production. In production they fall through to the real Envato API,
+    // where they are simply invalid purchase codes.
+    this.allowTestCodes = env.ENVIRONMENT !== 'production'
   }
 
   async verifyPurchaseCode(purchaseCode: string): Promise<EnvatoVerificationResponse> {
-    if (this.isTestPurchaseCode(purchaseCode)) return this.getMockPurchaseData(purchaseCode)
+    if (this.allowTestCodes && this.isTestPurchaseCode(purchaseCode)) return this.getMockPurchaseData(purchaseCode)
 
     try {
       const response = await fetch(`${this.apiUrl}/author/sale?code=${encodeURIComponent(purchaseCode)}`, {

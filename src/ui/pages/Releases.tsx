@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { formatFileSize, formatDate } from "@/lib/format"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useNavigate } from "react-router-dom"
 import {
   Card,
@@ -70,35 +71,24 @@ interface Pagination {
   totalPages: number
 }
 
-function formatFileSize(bytes: number | null): string {
-  if (bytes === null || bytes === undefined) return "—"
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function formatDate(value: string | null | undefined): string {
-  if (!value) return "—"
-  const d = parseDbDate(value)
-  if (Number.isNaN(d.getTime())) return value
-  return d.toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
 export function Releases() {
   const navigate = useNavigate()
   const [versions, setVersions] = useState<AppVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 10, total: 0, totalPages: 0 })
   const [activeTab, setActiveTab] = useState("versions")
+
+  // Debounce the live search input, resetting pagination once it settles.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedSearch(search)
+      setPage(1)
+    }, 300)
+    return () => window.clearTimeout(t)
+  }, [search])
 
   // Upload state
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -112,6 +102,7 @@ export function Releases() {
 
   // Detail state
   const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<AppVersion | null>(null)
 
   // Update logs state
   const [logs, setLogs] = useState<UpdateLog[]>([])
@@ -123,7 +114,7 @@ export function Releases() {
     try {
       setLoading(true)
       const params = new URLSearchParams({ page: String(page), limit: "10" })
-      if (search) params.set("search", search)
+      if (debouncedSearch) params.set("search", debouncedSearch)
       const res = await fetch(`/manage/api/app-versions?${params}`, { credentials: "include" })
       if (res.ok) {
         const data = await res.json() as { versions: AppVersion[]; pagination: Pagination }
@@ -135,7 +126,7 @@ export function Releases() {
     } finally {
       setLoading(false)
     }
-  }, [page, search])
+  }, [page, debouncedSearch])
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -206,7 +197,6 @@ export function Releases() {
   }
 
   async function handleDelete(v: AppVersion) {
-    if (!window.confirm(`Delete release v${v.version}? This cannot be undone.`)) return
     setDeleting(true)
     try {
       const res = await fetch(`/manage/api/app-versions/${v.version}`, {
@@ -216,9 +206,11 @@ export function Releases() {
       const data = await res.json().catch(() => null) as { error?: string } | null
       if (!res.ok) throw new Error(data?.error || "Delete failed")
       toast.success(`Release v${v.version} deleted`)
+      setConfirmDelete(null)
       fetchVersions()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed")
+      setConfirmDelete(null)
     } finally {
       setDeleting(false)
     }
@@ -263,10 +255,7 @@ export function Releases() {
                   className="h-8 pl-8 text-xs"
                   placeholder="Search by version or changelog..."
                   value={search}
-                  onChange={(e) => {
-                    setPage(1)
-                    setSearch(e.target.value)
-                  }}
+                  onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
             </CardContent>
@@ -333,7 +322,7 @@ export function Releases() {
                                 variant="ghost"
                                 size="sm"
                                 className="h-7 w-7 cursor-pointer p-0 text-destructive"
-                                onClick={() => handleDelete(v)}
+                                onClick={() => setConfirmDelete(v)}
                                 disabled={deleting}
                                 title="Delete"
                               >
@@ -545,6 +534,16 @@ export function Releases() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onOpenChange={(open) => !open && !deleting && setConfirmDelete(null)}
+        title={confirmDelete ? `Delete release v${confirmDelete.version}?` : ""}
+        description="This cannot be undone. The zip stays in storage but the version row is removed."
+        confirmLabel="Delete"
+        loading={deleting}
+        onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
+      />
     </div>
   )
 }

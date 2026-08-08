@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { formatFileSize, formatDate } from "@/lib/format"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -66,28 +67,6 @@ interface ListResponse {
 const MAX_UI_UPLOAD = 95 * 1024 * 1024
 const MAX_PREVIEW_BYTES = 1024 * 1024 // text preview limit
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B"
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "—"
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
 function fileIcon(entry: FileEntry) {
   const ext = entry.name.split(".").pop()?.toLowerCase() || ""
   const type = entry.contentType || ""
@@ -129,6 +108,7 @@ export function FileManager() {
   const [entries, setEntries] = useState<ListResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [cursor, setCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -145,12 +125,18 @@ export function FileManager() {
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Debounce the live search input so we don't refetch on every keystroke
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search), 300)
+    return () => window.clearTimeout(t)
+  }, [search])
+
   const fetchList = useCallback(async (reset: boolean) => {
     try {
       if (reset) setLoading(true)
       const params = new URLSearchParams()
       params.set("path", path)
-      if (search.trim()) params.set("search", search.trim())
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim())
       if (!reset && cursor) params.set("cursor", cursor)
       params.set("limit", "200")
 
@@ -173,14 +159,14 @@ export function FileManager() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [path, search, cursor])
+  }, [path, debouncedSearch, cursor])
 
   useEffect(() => {
     setCursor(null)
     setEntries(null)
     fetchList(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, search])
+  }, [path, debouncedSearch])
 
   const openFolder = (folderKey: string) => {
     setPath(folderKey)
@@ -496,7 +482,7 @@ export function FileManager() {
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {entry.kind === "file" ? formatBytes(entry.size) : "—"}
+                      {entry.kind === "file" ? formatFileSize(entry.size) : "—"}
                     </TableCell>
                     <TableCell>
                       {entry.kind === "folder" ? (
@@ -613,7 +599,7 @@ export function FileManager() {
             <div className="min-w-0">
               <DialogTitle className="truncate">{previewEntry?.name}</DialogTitle>
               <DialogDescription className="break-all font-mono text-xs">
-                {previewEntry?.key} · {previewEntry ? formatBytes(previewEntry.size) : ""}
+                {previewEntry?.key} · {previewEntry ? formatFileSize(previewEntry.size) : ""}
                 {previewEntry?.sha256 ? ` · sha256 ${previewEntry.sha256.slice(0, 12)}…` : ""}
               </DialogDescription>
             </div>

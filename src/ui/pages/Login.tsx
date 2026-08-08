@@ -103,7 +103,7 @@ export function Login() {
                   size="icon"
                   className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowPassword(!showPassword)}
-                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? (
                     <IconEyeOff className="h-4 w-4 text-muted-foreground" />

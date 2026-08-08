@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
 import { useNavigate } from "react-router-dom"
 import {
   Card,
@@ -71,19 +71,6 @@ interface TicketAnalytics {
     weekday: string
     hour_wib: number
   }>
-}
-
-function toWIB(dateStr: string): string {
-  if (!dateStr) return "-"
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
 }
 
 function formatDuration(minutes: number | null): string {

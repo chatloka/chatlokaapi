@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
+import { initials } from "@/lib/format"
 import { useNavigate } from "react-router-dom"
 import {
   Card,
@@ -53,41 +54,30 @@ interface Pagination {
   totalPages: number
 }
 
-function toWIB(dateStr: string | null) {
-  if (!dateStr) return "-"
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
-function initials(name: string | null, email: string): string {
-  const source = name?.trim() || email
-  const parts = source.split(/[\s@.]+/).filter(Boolean)
-  const first = parts[0]?.[0] || ""
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : ""
-  return (first + last).toUpperCase()
-}
-
 export function Users() {
   const navigate = useNavigate()
   const [tab, setTab] = useState<"all" | "lead" | "customer">("all")
   const [contacts, setContacts] = useState<ContactRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 })
+
+  // Debounce the live search input, resetting pagination once it settles.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedSearch(search)
+      setPage(1)
+    }, 300)
+    return () => window.clearTimeout(t)
+  }, [search])
 
   const fetchContacts = useCallback(async () => {
     try {
       setLoading(true)
       const params = new URLSearchParams({ page: String(page), limit: "20" })
-      if (search.trim()) params.set("search", search.trim())
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim())
       if (tab !== "all") params.set("type", tab)
       const res = await fetch(`/manage/api/contacts?${params.toString()}`, { credentials: "include" })
       if (res.ok) {
@@ -100,7 +90,7 @@ export function Users() {
     } finally {
       setLoading(false)
     }
-  }, [page, search, tab])
+  }, [page, debouncedSearch, tab])
 
   useEffect(() => {
     fetchContacts()
@@ -128,7 +118,7 @@ export function Users() {
           <Input
             placeholder="Cari email, nama, atau purchase code..."
             value={search}
-            onChange={(e) => { setPage(1); setSearch(e.target.value) }}
+            onChange={(e) => setSearch(e.target.value)}
             className="pl-8"
           />
         </div>

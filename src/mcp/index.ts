@@ -60,12 +60,15 @@ export function createMcpServer(env: McpEnv) {
     "get_licenses",
     {
       description: "Get all licenses. Returns purchase code, domain, status, buyer info, license type, and timestamps for every license in the system.",
-      inputSchema: z.object({}),
+      inputSchema: z.object({
+        limit: z.number().optional().describe("Max results, defaults to 50, max 500"),
+      }),
     },
-    async () => {
+    async ({ limit }) => {
+      const capped = Math.min(Math.max(Math.floor(limit || 50), 1), 500)
       const { results } = await env.DB.prepare(
-        "SELECT id, purchase_code, license_type, domain, buyer_email, buyer_name, status, activated_at, last_validated_at, created_at, updated_at FROM licenses ORDER BY created_at DESC"
-      ).all()
+        "SELECT id, purchase_code, license_type, domain, buyer_email, buyer_name, status, activated_at, last_validated_at, created_at, updated_at FROM licenses ORDER BY created_at DESC LIMIT ?"
+      ).bind(capped).all()
       return text(JSON.stringify(results, null, 2))
     }
   )
@@ -1254,11 +1257,10 @@ export function createMcpServer(env: McpEnv) {
         await ticketService.markTicketSeen(ticket.id)
         return text(JSON.stringify({ success: true, marked_read: [ticket_number] }, null, 2))
       }
-      const unread = await ticketService.getUnreadTickets()
-      for (const t of unread) {
-        await ticketService.markTicketSeen(t.id)
-      }
-      return text(JSON.stringify({ success: true, marked_read_count: unread.length }, null, 2))
+      const res = await env.DB.prepare(
+        `UPDATE tickets SET admin_last_seen_at = ? WHERE admin_last_seen_at IS NULL OR last_message_at > admin_last_seen_at`
+      ).bind(new Date().toISOString()).run()
+      return text(JSON.stringify({ success: true, marked_read_count: res.meta?.changes ?? 0 }, null, 2))
     }
   )
 
@@ -1790,6 +1792,9 @@ export function createMcpServer(env: McpEnv) {
         return text(`Error: '${filename ?? ""}' is not a valid file name (no slashes)`)
       }
       const folderPath = (folder || "files/").trim().replace(/^\/+|\/+$/g, "") + "/"
+      if (!folderPath.startsWith("files/")) {
+        return text(`Error: folder must be inside 'files/' (got '${folderPath}')`)
+      }
       const key = `${folderPath}${name}`
       if (!isSafeObjectKey(key)) return text(`Error: target key '${key}' is not valid`)
 

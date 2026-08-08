@@ -200,7 +200,7 @@ export function Profile() {
                   size="icon"
                   className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                  tabIndex={-1}
+                  aria-label={showCurrentPassword ? "Hide current password" : "Show current password"}
                 >
                   {showCurrentPassword ? (
                     <IconEyeOff className="h-4 w-4 text-muted-foreground" />
@@ -230,7 +230,7 @@ export function Profile() {
                   size="icon"
                   className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowNewPassword(!showNewPassword)}
-                  tabIndex={-1}
+                  aria-label={showNewPassword ? "Hide new password" : "Show new password"}
                 >
                   {showNewPassword ? (
                     <IconEyeOff className="h-4 w-4 text-muted-foreground" />
@@ -260,7 +260,7 @@ export function Profile() {
                   size="icon"
                   className="absolute right-0 top-0 h-full px-3 hover:bg-transparent cursor-pointer"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  tabIndex={-1}
+                  aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"}
                 >
                   {showConfirmPassword ? (
                     <IconEyeOff className="h-4 w-4 text-muted-foreground" />

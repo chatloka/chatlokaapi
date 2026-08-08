@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { parseDbDate } from "@/lib/dates";
+import { toWIB } from "@/lib/dates";
+import { formatFileSize } from "@/lib/format";
+import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import { useParams, useNavigate, useBlocker } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -165,28 +167,6 @@ interface AiAnalysis {
   updated_at: string | null;
 }
 
-function toWIB(dateStr: string): string {
-  if (!dateStr) return "";
-  const d = parseDbDate(dateStr);
-  return d.toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatFileSize(bytes: number | null): string {
-  if (bytes === null || bytes === undefined) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
 function getFileIcon(contentType: string) {
   if (!contentType) return IconFile;
   const ct = contentType.toLowerCase();
@@ -281,14 +261,10 @@ function getPriorityBadge(priority: string): {
       return {
         variant: "secondary",
         className: "bg-muted text-muted-foreground",
-        icon: IconMinus,
+        icon: IconCircleDot,
         label: priority || "None",
       };
   }
-}
-
-function IconMinus({ size = 16 }: { size?: number }) {
-  return <IconCircleDot size={size} />;
 }
 
 function formatSender(ticket: Ticket): string {
@@ -1150,7 +1126,7 @@ export function TicketDetail() {
                       className={`prose prose-invert prose-sm max-w-none text-sm text-foreground/90 ${
                         isAutomated ? "msg-auto-body" : ""
                       }`}
-                      dangerouslySetInnerHTML={{ __html: msg.body_html }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(msg.body_html) }}
                     />
                   ) : (
                     <p className="text-sm text-foreground/80">
@@ -1184,6 +1160,7 @@ export function TicketDetail() {
                                   size="sm"
                                   className="h-6 w-6 cursor-pointer p-0"
                                   onClick={() => handlePreviewAttachment(att)}
+                                  aria-label={`Preview ${att.filename}`}
                                 >
                                   <IconEye size={12} />
                                 </Button>
@@ -1193,6 +1170,7 @@ export function TicketDetail() {
                                 size="sm"
                                 className="h-6 w-6 cursor-pointer p-0"
                                 onClick={() => handleDownloadAttachment(att)}
+                                aria-label={`Download ${att.filename}`}
                               >
                                 <IconDownload size={12} />
                               </Button>

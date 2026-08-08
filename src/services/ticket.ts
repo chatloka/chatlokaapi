@@ -188,7 +188,7 @@ export class TicketService {
   async findOpenTicketBySender(fromEmail: string): Promise<Ticket | null> {
     return first<Ticket>(
       this.db,
-      `SELECT * FROM tickets WHERE from_email = ? AND status = 'open' ORDER BY updated_at DESC LIMIT 1`,
+      `SELECT * FROM tickets WHERE LOWER(TRIM(from_email)) = LOWER(TRIM(?)) AND status = 'open' ORDER BY updated_at DESC LIMIT 1`,
       fromEmail,
     )
   }
@@ -196,7 +196,8 @@ export class TicketService {
   async reopenTicket(ticketId: number): Promise<void> {
     await run(
       this.db,
-      `UPDATE tickets SET status = 'open', updated_at = datetime('now') WHERE id = ?`,
+      `UPDATE tickets SET status = 'open', updated_at = ? WHERE id = ?`,
+      new Date().toISOString(),
       ticketId,
     )
   }
@@ -204,15 +205,24 @@ export class TicketService {
   /** Register email addresses (from, to, cc, bcc) as participants of a ticket. */
   async addParticipants(ticketId: number, emails: string[]): Promise<void> {
     const seen = new Set<string>()
+    const unique: string[] = []
     for (const raw of emails) {
       const email = raw?.trim().toLowerCase()
       if (!email || seen.has(email)) continue
       seen.add(email)
+      unique.push(email)
+    }
+    if (unique.length === 0) return
+
+    // D1 caps bound parameters at 100 per query (2 per row -> max 49 rows per statement).
+    const MAX_ROWS_PER_INSERT = 49
+    for (let i = 0; i < unique.length; i += MAX_ROWS_PER_INSERT) {
+      const chunk = unique.slice(i, i + MAX_ROWS_PER_INSERT)
+      const values = chunk.map(() => '(?, ?)').join(', ')
       await run(
         this.db,
-        'INSERT OR IGNORE INTO ticket_participants (ticket_id, email) VALUES (?, ?)',
-        ticketId,
-        email,
+        `INSERT OR IGNORE INTO ticket_participants (ticket_id, email) VALUES ${values}`,
+        ...chunk.flatMap((email) => [ticketId, email]),
       )
     }
   }
@@ -270,16 +280,24 @@ export class TicketService {
 
     let movedMessages = 0
     const merged = new Set<number>()
+    const isoNow = new Date().toISOString()
 
     for (const sourceId of sourceTicketIds) {
       if (sourceId === targetTicketId) continue
       const source = await this.getTicketById(sourceId)
       if (!source) throw new Error('Source ticket not found')
-      if (source.status === 'merged') {
-        throw new Error(`Ticket ${source.ticket_number} has already been merged`)
-      }
       if (merged.has(source.id)) continue
       merged.add(source.id)
+
+      // Claim the source FIRST (mark it merged) before moving any data, so a
+      // concurrent merge cannot interleave between the checks and the moves.
+      const claimed = await this.db.prepare(
+        `UPDATE tickets SET status = 'merged', merged_into = ?, merged_at = ?, updated_at = ? WHERE id = ? AND status != 'merged'`
+      ).bind(targetTicketId, isoNow, isoNow, sourceId).run()
+      if ((claimed.meta?.changes ?? 0) === 0) {
+        merged.delete(source.id)
+        throw new Error(`Ticket ${source.ticket_number} has already been merged`)
+      }
 
       // Move messages (and their attachments) to the target ticket
       const msgResult = await this.db.prepare(
@@ -304,11 +322,6 @@ export class TicketService {
         'DELETE FROM ticket_participants WHERE ticket_id = ?'
       ).bind(sourceId).run()
       await this.addParticipants(targetTicketId, [source.from_email])
-
-      // Mark source as merged (kept for audit)
-      await this.db.prepare(
-        `UPDATE tickets SET status = 'merged', merged_into = ?, merged_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
-      ).bind(targetTicketId, sourceId).run()
     }
 
     if (merged.size === 0) {
@@ -320,8 +333,8 @@ export class TicketService {
       'SELECT COUNT(*) as cnt, MAX(created_at) as last FROM ticket_messages WHERE ticket_id = ?'
     ).bind(targetTicketId).first() as { cnt: number; last: string | null } | undefined
     await this.db.prepare(
-      `UPDATE tickets SET message_count = ?, last_message_at = ?, updated_at = datetime('now') WHERE id = ?`
-    ).bind(agg?.cnt ?? 0, agg?.last ?? null, targetTicketId).run()
+      `UPDATE tickets SET message_count = ?, last_message_at = ?, updated_at = ? WHERE id = ?`
+    ).bind(agg?.cnt ?? 0, agg?.last ?? null, isoNow, targetTicketId).run()
 
     return { movedMessages, mergedCount: merged.size }
   }
@@ -386,17 +399,54 @@ export class TicketService {
 
     if (updates.length === 0) return
 
-    updates.push('updated_at = datetime(\'now\')')
+    updates.push('updated_at = ?')
+    params.push(new Date().toISOString())
     params.push(ticketNumber)
 
     await this.db.prepare(`UPDATE tickets SET ${updates.join(', ')} WHERE ticket_number = ?`).bind(...params).run()
   }
 
-  async getTicketMessages(ticketId: number): Promise<TicketMessage[]> {
+  async getTicketMessages(ticketId: number, options?: { includeBodies?: boolean }): Promise<TicketMessage[]> {
+    const includeBodies = options?.includeBodies ?? true
+    const columns = includeBodies
+      ? '*'
+      : 'id, ticket_id, direction, from_email, to_email, subject, resend_email_id, message_id, in_reply_to, references_header, has_attachments, is_automated, response_minutes, created_at'
     const result = await this.db.prepare(
-      'SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC'
+      `SELECT ${columns} FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC`
     ).bind(ticketId).all()
     return (result.results || []) as unknown as TicketMessage[]
+  }
+
+  /**
+   * Fetch a ticket's messages and all their attachments in 1 + ceil(n/99)
+   * queries (messages, then one IN(...) per 99 message ids) instead of the
+   * N+1 per-message attachment lookups. Attachments are grouped by
+   * ticket_message_id and ordered by created_at within each message.
+   */
+  async getTicketMessagesWithAttachments(
+    ticketId: number,
+    options?: { includeBodies?: boolean },
+  ): Promise<Array<TicketMessage & { attachments: TicketAttachment[] }>> {
+    const messages = await this.getTicketMessages(ticketId, options)
+    if (messages.length === 0) return []
+
+    const byMessage = new Map<number, TicketAttachment[]>()
+    const MAX_IDS_PER_QUERY = 99
+    for (let i = 0; i < messages.length; i += MAX_IDS_PER_QUERY) {
+      const chunk = messages.slice(i, i + MAX_IDS_PER_QUERY)
+      const placeholders = chunk.map(() => '?').join(', ')
+      const result = await this.db.prepare(
+        `SELECT * FROM ticket_attachments WHERE ticket_message_id IN (${placeholders}) ORDER BY ticket_message_id, created_at ASC`
+      ).bind(...chunk.map((m) => m.id)).all()
+      for (const row of result.results || []) {
+        const att = row as unknown as TicketAttachment
+        const list = byMessage.get(att.ticket_message_id)
+        if (list) list.push(att)
+        else byMessage.set(att.ticket_message_id, [att])
+      }
+    }
+
+    return messages.map((m) => ({ ...m, attachments: byMessage.get(m.id) || [] }))
   }
 
   async countTicketMessages(ticketId: number): Promise<number> {
@@ -435,6 +485,7 @@ export class TicketService {
     references_header?: string | null
     has_attachments?: number
     is_automated?: number
+    client_idempotency_key?: string | null
   }): Promise<TicketMessage> {
     const now = new Date().toISOString()
 
@@ -450,21 +501,25 @@ export class TicketService {
           const minutes = Math.round((current - base) / 60000)
           responseMinutes = Math.max(0, minutes)
 
-          // Set first-response metrics if not set yet
-          await this.db.prepare(
-            `UPDATE tickets SET
-               first_response_at = COALESCE(first_response_at, ?),
-               first_response_minutes = COALESCE(first_response_minutes, ?)
-             WHERE id = ? AND first_response_at IS NULL`
-          ).bind(now, responseMinutes, data.ticket_id).run()
+          // Set first-response metrics if not set yet. Skipped for automated
+          // messages (e.g. the inbound ack) — those would pollute the
+          // first-response analytics with near-zero times.
+          if (!data.is_automated) {
+            await this.db.prepare(
+              `UPDATE tickets SET
+                 first_response_at = COALESCE(first_response_at, ?),
+                 first_response_minutes = COALESCE(first_response_minutes, ?)
+               WHERE id = ? AND first_response_at IS NULL`
+            ).bind(now, responseMinutes, data.ticket_id).run()
+          }
         }
       }
     }
 
-    await run(
+    const result = await run(
       this.db,
-      `INSERT INTO ticket_messages (ticket_id, direction, from_email, to_email, subject, body_html, body_text, resend_email_id, message_id, in_reply_to, references_header, has_attachments, is_automated, response_minutes, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ticket_messages (ticket_id, direction, from_email, to_email, subject, body_html, body_text, resend_email_id, message_id, in_reply_to, references_header, has_attachments, is_automated, response_minutes, client_idempotency_key, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       data.ticket_id,
       data.direction,
       data.from_email,
@@ -479,18 +534,23 @@ export class TicketService {
       data.has_attachments || 0,
       data.is_automated || 0,
       responseMinutes,
+      data.client_idempotency_key || null,
       now,
     )
+    const insertedId = result.meta?.last_row_id as number | undefined
 
     // Update ticket. For outbound messages (admin replied), mark as seen by admin.
     const adminSeenClause = data.direction === 'outbound'
       ? `, admin_last_seen_at = ?`
       : ''
     await this.db.prepare(
-      `UPDATE tickets SET last_message_at = ?, message_count = message_count + 1, updated_at = datetime('now')${adminSeenClause} WHERE id = ?`
-    ).bind(now, ...(data.direction === 'outbound' ? [now, data.ticket_id] : [data.ticket_id])).run()
+      `UPDATE tickets SET last_message_at = ?, message_count = message_count + 1, updated_at = ?${adminSeenClause} WHERE id = ?`
+    ).bind(now, now, ...(data.direction === 'outbound' ? [now, data.ticket_id] : [data.ticket_id])).run()
 
-    return (await this.getMessageByMessageId(data.message_id || ''))!
+    if (!insertedId) {
+      throw new Error('Failed to insert ticket message')
+    }
+    return (await this.getTicketMessageById(insertedId))!
   }
 
   async createAttachment(data: {
@@ -656,7 +716,7 @@ export class TicketService {
       ),
     ])
 
-    const tickets = (ticketsResult.results || []) as unknown as Array<{
+    const tickets = ((ticketsResult.results || []) as unknown as Array<{
       id: number
       ticket_number: string
       from_email: string
@@ -664,8 +724,8 @@ export class TicketService {
       created_at: string
       first_response_at: string | null
       first_response_minutes: number | null
-    }>
-    const replies = (messagesResult.results || []) as unknown as Array<{
+    }>).filter((t) => !Number.isNaN(new Date(t.created_at).getTime()))
+    const replies = ((messagesResult.results || []) as unknown as Array<{
       id: number
       ticket_id: number
       created_at: string
@@ -673,7 +733,7 @@ export class TicketService {
       ticket_number: string
       subject: string
       from_email: string
-    }>
+    }>).filter((r) => !Number.isNaN(new Date(r.created_at).getTime()))
 
     const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 

@@ -36,7 +36,11 @@
       "BETTER_AUTH_SECRET",
       "TURNSTILE_SECRET_KEY",
       "TELEGRAM_BOT_TOKEN",
-      "TELEGRAM_WEBHOOK_SECRET"
+      "TELEGRAM_WEBHOOK_SECRET",
+      "MCP_API_KEY",
+      "RESEND_API_KEY",
+      "RESEND_WEBHOOK_SECRET",
+      "OPENAI_API_KEY"
     ]
   },
   "d1_databases": [

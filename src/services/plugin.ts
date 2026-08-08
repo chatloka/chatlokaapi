@@ -1,5 +1,5 @@
 import type { PluginInput, PluginVersion, PluginVersionInfo } from '../types'
-import { first, run } from './d1'
+import { all, first, run } from './d1'
 
 export class PluginService {
   constructor(
@@ -17,9 +17,26 @@ export class PluginService {
 
   async checkUpdates(plugins: PluginInput[]): Promise<Record<string, PluginVersionInfo>> {
     const result: Record<string, PluginVersionInfo> = {}
+    if (plugins.length === 0) return result
+
+    const slugs = [...new Set(plugins.map((p) => p.slug))]
+    const latestBySlug = new Map<string, { version: string; changelog: string | null; checksum: string | null }>()
+
+    // D1 caps bound parameters at 100 per query -> 99 slugs per IN chunk.
+    const MAX_SLUGS_PER_QUERY = 99
+    for (let i = 0; i < slugs.length; i += MAX_SLUGS_PER_QUERY) {
+      const chunk = slugs.slice(i, i + MAX_SLUGS_PER_QUERY)
+      const placeholders = chunk.map(() => '?').join(', ')
+      const rows = await all<{ slug: string; version: string; changelog: string | null; checksum: string | null }>(
+        this.db,
+        `SELECT slug, version, changelog, checksum FROM plugin_versions WHERE is_latest = 1 AND slug IN (${placeholders})`,
+        ...chunk,
+      )
+      for (const row of rows) latestBySlug.set(row.slug, row)
+    }
 
     for (const { slug, version } of plugins) {
-      const latest = await this.getLatestVersion(slug)
+      const latest = latestBySlug.get(slug)
       if (!latest) {
         result[slug] = { has_update: false, version, changelog: null, download_url: null, checksum: null }
         continue

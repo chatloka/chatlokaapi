@@ -142,6 +142,11 @@ export class TelegramApi {
       ...(opts.reply_markup ? { reply_markup: opts.reply_markup } : {}),
       ...(opts.disable_notification ? { disable_notification: true } : {}),
     })
+    if (!data.ok) {
+      throw new Error(
+        `Telegram sendMessage failed: ${data.description || `error_code ${data.error_code ?? 'unknown'}`}`,
+      )
+    }
     return data.result || null
   }
 

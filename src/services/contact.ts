@@ -82,33 +82,29 @@ export function getSupportStatus(supportUntil: string | null | undefined): Suppo
 export class ContactService {
   constructor(private db: D1Database) {}
 
-  async upsertContactFromEmail(email: string, name?: string | null): Promise<Contact> {
+  async upsertContactFromEmail(email: string, name?: string | null, isNewTicket = true): Promise<Contact> {
     const normalized = normalizeEmail(email)
     if (!normalized) throw new Error('Email is required')
 
-    const existing = await first<Contact>(this.db, 'SELECT * FROM contacts WHERE email = ?', normalized)
-
-    if (existing) {
-      await run(
-        this.db,
-        'UPDATE contacts SET name = COALESCE(?, name), last_contact_at = datetime(\'now\'), total_tickets = total_tickets + 1, updated_at = datetime(\'now\') WHERE id = ?',
-        name || null,
-        existing.id,
-      )
-      return (await first<Contact>(this.db, 'SELECT * FROM contacts WHERE id = ?', existing.id))!
-    }
-
     const now = new Date().toISOString()
+    const ticketIncrement = isNewTicket ? 1 : 0
     await run(
       this.db,
       `INSERT INTO contacts (email, name, type, first_contact_at, last_contact_at, total_tickets, created_at, updated_at)
-       VALUES (?, ?, 'lead', ?, ?, 1, ?, ?)`,
+       VALUES (?, ?, 'lead', ?, ?, ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET
+         name = COALESCE(excluded.name, contacts.name),
+         last_contact_at = excluded.last_contact_at,
+         total_tickets = contacts.total_tickets + excluded.total_tickets,
+         updated_at = excluded.updated_at`,
       normalized,
       name || null,
       now,
       now,
+      ticketIncrement,
       now,
       now,
+      ticketIncrement,
     )
     return (await first<Contact>(this.db, 'SELECT * FROM contacts WHERE email = ?', normalized))!
   }
@@ -126,18 +122,21 @@ export class ContactService {
     limit: number,
     filters: { search?: string; type?: ContactType },
   ): Promise<{ contacts: ContactWithLatestPurchase[]; total: number }> {
-    let where = 'WHERE 1=1'
+    const conditions: string[] = []
+    const countConditions: string[] = []
     const params: unknown[] = []
     const countParams: unknown[] = []
 
     if (filters.type) {
-      where += ' AND c.type = ?'
+      conditions.push('c.type = ?')
+      countConditions.push('type = ?')
       params.push(filters.type)
       countParams.push(filters.type)
     }
 
     if (filters.search) {
-      where += ' AND (c.email LIKE ? OR c.name LIKE ? OR COALESCE(p.purchase_code, \'\') LIKE ?)'
+      conditions.push('(c.email LIKE ? OR c.name LIKE ? OR COALESCE(p.purchase_code, \'\') LIKE ?)')
+      countConditions.push('(email LIKE ? OR name LIKE ? OR EXISTS (SELECT 1 FROM contact_purchases cp WHERE cp.contact_id = c.id AND cp.purchase_code LIKE ?))')
       const term = `%${filters.search}%`
       params.push(term, term, term)
       countParams.push(term, term, term)
@@ -155,10 +154,14 @@ export class ContactService {
         ORDER BY cp.support_until DESC, cp.id DESC
         LIMIT 1
       )
-      ${where}
+      ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
       ORDER BY c.last_contact_at DESC, c.id DESC
       LIMIT ? OFFSET ?`
-    const countQuery = `SELECT COUNT(*) as total FROM contacts c LEFT JOIN contact_purchases p ON p.contact_id = c.id ${where}`
+    // Count distinct contacts WITHOUT joining purchases (a join would count a
+    // contact once per purchase); the purchase-code search uses EXISTS instead.
+    const countQuery = `SELECT COUNT(*) as total FROM contacts c ${
+      countConditions.length > 0 ? `WHERE ${countConditions.join(' AND ')}` : ''
+    }`
 
     const [listResult, countResult] = await this.db.batch([
       this.db.prepare(listQuery).bind(...params, limit, (page - 1) * limit),

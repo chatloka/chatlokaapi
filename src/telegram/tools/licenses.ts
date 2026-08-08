@@ -254,8 +254,10 @@ async function licLogs(ctx: BotCtx, query: TelegramCallbackQuery, parts: string[
   const { kit } = ctx
   const purchaseCode = parts[0] || ''
   const result = await kit.db.prepare(
-    `SELECT validation_type, status, ip_address, user_agent, created_at
-     FROM license_validation_logs WHERE purchase_code = ? ORDER BY created_at DESC LIMIT 10`
+    `SELECT v.validation_type, v.success, v.ip_address, v.user_agent, v.created_at
+     FROM validation_logs v
+     JOIN licenses l ON l.id = v.license_id
+     WHERE l.purchase_code = ? ORDER BY v.created_at DESC LIMIT 10`
   ).bind(purchaseCode).all()
   const rows = (result.results || []) as Array<Record<string, unknown>>
 
@@ -264,7 +266,7 @@ async function licLogs(ctx: BotCtx, query: TelegramCallbackQuery, parts: string[
     '',
     ...(rows.length === 0
       ? ['Belum ada log.']
-      : rows.map((r) => `• <b>${escapeHtml(String(r.validation_type))}</b> — ${escapeHtml(String(r.status || '—'))} · <code>${escapeHtml(String(r.created_at || '—'))}</code>`)),
+      : rows.map((r) => `• <b>${escapeHtml(String(r.validation_type))}</b> — ${r.success === 1 ? '✅ ok' : '❌ gagal'} · <code>${escapeHtml(String(r.created_at || '—'))}</code>`)),
   ].join('\n')
 
   await kit.sendMessage(query.from.id, text, {

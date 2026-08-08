@@ -221,6 +221,21 @@ export class TelegramBotService {
   async handleUpdate(update: TelegramUpdate, context: { raw?: string } = {}): Promise<void> {
     if (!this.configured || !this.api) return
 
+    // Dedupe: Telegram redelivers an update when the webhook doesn't respond in
+    // time. Claim the update_id up front (INSERT OR IGNORE) so a redelivered
+    // update is processed exactly once. Fail-open: if the ledger table is
+    // unavailable (pre-migration), process the update anyway.
+    if (typeof update.update_id === 'number') {
+      try {
+        const claim = await this.db.prepare(
+          'INSERT OR IGNORE INTO telegram_processed_updates (update_id, processed_at) VALUES (?, datetime(\'now\'))'
+        ).bind(update.update_id).run()
+        if ((claim.meta?.changes ?? 0) === 0) return
+      } catch (err) {
+        console.error('[Telegram] update dedupe failed (processing anyway):', err)
+      }
+    }
+
     const chatId = update.callback_query?.message?.chat.id ?? update.message?.chat.id ?? update.callback_query?.from.id
     const fromUser = update.callback_query?.from.id ?? update.message?.from?.id
 

@@ -1,5 +1,8 @@
 import type { Context } from 'hono'
 
 export function getClientIp(c: Context): string | undefined {
-  return c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || c.req.header('x-real-ip')
+  // Trust only the IP set by Cloudflare itself. x-forwarded-for / x-real-ip
+  // are attacker-controllable when sent by arbitrary clients and must never
+  // be used for rate limiting, audit logs or abuse decisions.
+  return c.req.header('cf-connecting-ip') || undefined
 }

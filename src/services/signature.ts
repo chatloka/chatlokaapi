@@ -14,18 +14,32 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+// Key material is stable per isolate — import once, reuse across requests.
+const keyCache = new Map<string, Promise<CryptoKey>>()
+
+function getPrivateKey(pem: string): Promise<CryptoKey> {
+  const cached = keyCache.get(pem)
+  if (cached) return cached
+  const imported = crypto.subtle.importKey(
+    'pkcs8',
+    pemToArrayBuffer(pem),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  ).catch((err) => {
+    keyCache.delete(pem)
+    throw err
+  })
+  keyCache.set(pem, imported)
+  return imported
+}
+
 export class SignatureService {
   constructor(private privateKeyPem: string) {}
 
   private async sign(data: unknown): Promise<string> {
     const payload = JSON.stringify(data)
-    const key = await crypto.subtle.importKey(
-      'pkcs8',
-      pemToArrayBuffer(this.privateKeyPem),
-      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-      false,
-      ['sign'],
-    )
+    const key = await getPrivateKey(this.privateKeyPem)
 
     const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(payload))
     return arrayBufferToBase64(signature)

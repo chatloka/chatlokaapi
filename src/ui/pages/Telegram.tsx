@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
 import {
   Card,
   CardContent,
@@ -79,19 +79,6 @@ interface BotLog {
 interface BotLogsResponse {
   logs: BotLog[]
   pagination: Pagination
-}
-
-function toWIB(dateStr: string) {
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
 }
 
 export function Telegram() {

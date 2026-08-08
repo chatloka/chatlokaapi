@@ -218,18 +218,41 @@ adminRoutes.post("/plugins/upload", async (c) => {
   const db = c.env.DB;
   const bucket = c.env.PLUGINS_BUCKET;
 
+  // Same boundaries as the MCP release tools (src/mcp/index.ts).
+  const MAX_PLUGIN_UPLOAD_BYTES = 95 * 1024 * 1024;
+  const SAFE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+  const SAFE_VERSION_RE = /^[0-9][0-9a-zA-Z.\-_]{0,63}$/;
+
+  // Reject oversized uploads via Content-Length before buffering the body.
+  const contentLength = parseInt(c.req.header("content-length") || "0", 10);
+  if (Number.isFinite(contentLength) && contentLength > MAX_PLUGIN_UPLOAD_BYTES) {
+    return c.json({ error: "File exceeds the 95 MB upload limit" }, 413);
+  }
+
   const formData = await c.req.formData();
   const file = formData.get("file") as File | null;
-  const slug = formData.get("slug") as string | null;
-  const version = formData.get("version") as string | null;
+  const slug = (formData.get("slug") as string | null || "").trim();
+  const version = (formData.get("version") as string | null || "").trim();
   const changelog = formData.get("changelog") as string | null;
 
   if (!file || !slug || !version) {
     return c.json({ error: "Missing required fields: file, slug, version" }, 400);
   }
 
+  if (!SAFE_SLUG_RE.test(slug)) {
+    return c.json({ error: "Invalid plugin slug (letters, digits, _ and - only)" }, 400);
+  }
+
+  if (!SAFE_VERSION_RE.test(version) || version.includes("..") || version.includes("//")) {
+    return c.json({ error: "Invalid plugin version" }, 400);
+  }
+
   if (!file.name.endsWith(".zip")) {
     return c.json({ error: "File must be a .zip file" }, 400);
+  }
+
+  if (file.size > MAX_PLUGIN_UPLOAD_BYTES) {
+    return c.json({ error: "File exceeds the 95 MB upload limit" }, 413);
   }
 
   // Calculate checksum
@@ -1104,22 +1127,26 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
   let bodyHtml = "";
   let bodyText: string | undefined;
   let files: File[] = [];
+  let idempotencyKey: string | null = null;
 
   const contentType = c.req.header("Content-Type") || "";
   if (contentType.includes("multipart/form-data")) {
     const form = await c.req.formData();
     bodyHtml = (form.get("body_html") as string) || "";
     bodyText = (form.get("body_text") as string) || undefined;
+    idempotencyKey = ((form.get("idempotency_key") as string) || "").trim() || null;
     const fileEntries = form.getAll("files");
     files = fileEntries.filter((f): f is File => typeof f === "object" && f !== null && "arrayBuffer" in f);
   } else {
     const body = await c.req.json<{
       body_html: string;
       body_text?: string;
+      idempotency_key?: string;
       attachments?: Array<{ filename: string; content: string; content_type?: string }>;
     }>();
     bodyHtml = body.body_html || "";
     bodyText = body.body_text;
+    idempotencyKey = (body.idempotency_key || "").trim() || null;
     // Legacy JSON attachment support: base64 → File
     if (body.attachments?.length) {
       for (const a of body.attachments) {
@@ -1136,6 +1163,18 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
 
   if (!bodyHtml.trim()) {
     return c.json({ error: "body_html is required" }, 400);
+  }
+
+  // Idempotency: a retried request carrying the same key must not send the
+  // email twice. The key is stored on the outbound message row (unique index).
+  if (idempotencyKey) {
+    const existing = await db
+      .prepare("SELECT id FROM ticket_messages WHERE client_idempotency_key = ? LIMIT 1")
+      .bind(idempotencyKey)
+      .first();
+    if (existing) {
+      return c.json({ success: true, deduplicated: true });
+    }
   }
 
   // Enforce a reasonable size per file (Resend limit is 10MB per attachment)
@@ -1210,12 +1249,28 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
     }
   }
 
-  // Send email via Resend (with attachments as base64)
-  // To primary owner + CC all participants (merged tickets broadcast to everyone)
   const resendService = new ResendService(env);
   const fromName = env.TICKET_FROM_NAME || "Chatloka Support";
   const fromEmail = env.TICKET_FROM_EMAIL || "contact@support.chatloka.net";
   const from = `${fromName} <${fromEmail}>`;
+
+  // Store the outbound message FIRST (before sending) so a send failure leaves
+  // a visible outbound message. The Resend ids are filled in after the send.
+  const message = await ticketService.createMessage({
+    ticket_id: ticket.id,
+    direction: "outbound",
+    from_email: fromEmail,
+    to_email: ticket.from_email,
+    subject: `Re: ${ticket.subject}`,
+    body_html: bodyHtml,
+    body_text: bodyText,
+    resend_email_id: null,
+    has_attachments: uploadedAttachments.length > 0 ? 1 : 0,
+    ...(idempotencyKey ? { client_idempotency_key: idempotencyKey } : {}),
+  });
+
+  // Send email via Resend (with attachments as base64)
+  // To primary owner + CC all participants (merged tickets broadcast to everyone)
   const participants = (await ticketService.getParticipants(ticket.id)).filter((email) => {
     const normalized = email.toLowerCase();
     // Never CC the support inbox or the ticket owner themselves: CC'ing the
@@ -1248,19 +1303,11 @@ adminRoutes.post("/tickets/:ticketNumber/reply", async (c) => {
     console.error("[Ticket Reply] Failed to fetch sent email Message-ID:", sentErr);
   }
 
-  // Store outbound message
-  const message = await ticketService.createMessage({
-    ticket_id: ticket.id,
-    direction: "outbound",
-    from_email: fromEmail,
-    to_email: ticket.from_email,
-    subject: `Re: ${ticket.subject}`,
-    body_html: bodyHtml,
-    body_text: bodyText,
-    resend_email_id: result.id,
-    message_id: sentMessageId,
-    has_attachments: uploadedAttachments.length > 0 ? 1 : 0,
-  });
+  // Attach the send result to the pre-stored message row.
+  await db
+    .prepare("UPDATE ticket_messages SET resend_email_id = ?, message_id = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(result.id, sentMessageId, message.id)
+    .run();
 
   // Upload attachments to R2 (after we know the message id) and create records
   const storedAttachments = [];
@@ -1341,6 +1388,16 @@ adminRoutes.patch("/tickets/:ticketNumber", async (c) => {
 
   if (body.category !== undefined && !(TICKET_CATEGORIES as readonly string[]).includes(body.category)) {
     return c.json({ error: "Invalid category" }, 400);
+  }
+
+  const TICKET_STATUSES = ["open", "pending", "closed"] as const;
+  if (body.status !== undefined && !(TICKET_STATUSES as readonly string[]).includes(body.status)) {
+    return c.json({ error: "Invalid status" }, 400);
+  }
+
+  const TICKET_PRIORITIES = ["low", "medium", "high"] as const;
+  if (body.priority !== undefined && !(TICKET_PRIORITIES as readonly string[]).includes(body.priority)) {
+    return c.json({ error: "Invalid priority" }, 400);
   }
 
   await ticketService.updateTicket(ticketNumber, body);
@@ -1715,6 +1772,19 @@ adminRoutes.post("/files/folder", async (c) => {
   }
 });
 
+// Known top-level areas of the shared bucket. The File Manager is a pure R2
+// view (it lists from the root), so deletions are allowed inside any of these
+// prefixes — but never at the root itself, which would wipe the whole bucket.
+const FILE_MANAGER_ROOTS = ["files", "plugins", "app-releases"];
+
+function isSafeFileManagerKey(key: string): boolean {
+  if (!key || key.length > 500) return false;
+  if (key.includes("..")) return false;
+  if (key.startsWith("/")) return false;
+  const firstSegment = key.split("/")[0];
+  return FILE_MANAGER_ROOTS.includes(firstSegment);
+}
+
 // Delete a single object or an entire folder (recursive).
 adminRoutes.delete("/files", async (c) => {
   const fileManager = new FileManagerService(c.env.PLUGINS_BUCKET);
@@ -1723,6 +1793,12 @@ adminRoutes.delete("/files", async (c) => {
 
   if (!key) {
     return c.json({ error: { message: "key is required" } }, 400);
+  }
+
+  // Reject "/", root-ish keys, path traversal and anything outside the known
+  // top-level areas (guards against wiping the entire bucket).
+  if (!isSafeFileManagerKey(key)) {
+    return c.json({ error: { message: "Invalid object key" } }, 400);
   }
 
   try {

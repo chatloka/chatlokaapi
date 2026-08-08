@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, Fragment } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
 import {
   Card,
   CardContent,
@@ -117,11 +117,6 @@ interface LogStats {
   max_response_time: number
 }
 
-function toWIB(dateStr: string) {
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("en-GB", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
-}
-
 export function Logs() {
   const [apiLogs, setApiLogs] = useState<ApiLog[]>([])
   const [tamperLogs, setTamperLogs] = useState<TamperLog[]>([])
@@ -132,22 +127,41 @@ export function Logs() {
   const [mcpPagination, setMcpPagination] = useState<Pagination>({ page: 1, limit: 50, total: 0, totalPages: 0 })
   const [stats, setStats] = useState<LogStats | null>(null)
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [sort, setSort] = useState("newest")
   const [activeTab, setActiveTab] = useState("api")
 
   const [tamperSearch, setTamperSearch] = useState("")
+  const [debouncedTamperSearch, setDebouncedTamperSearch] = useState("")
   const [tamperSort, setTamperSort] = useState("newest")
 
   const [mcpSearch, setMcpSearch] = useState("")
+  const [debouncedMcpSearch, setDebouncedMcpSearch] = useState("")
   const [mcpSort, setMcpSort] = useState("newest")
   const [expandedMcpId, setExpandedMcpId] = useState<number | null>(null)
+
+  // Debounce the live search inputs (each triggers a full 3-endpoint refetch).
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search), 300)
+    return () => window.clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedTamperSearch(tamperSearch), 300)
+    return () => window.clearTimeout(t)
+  }, [tamperSearch])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedMcpSearch(mcpSearch), 300)
+    return () => window.clearTimeout(t)
+  }, [mcpSearch])
 
   const fetchLogs = useCallback(async () => {
     setLoading(true)
     try {
-      const searchParam = search ? `&search=${encodeURIComponent(search)}` : ""
-      const tamperSearchParam = tamperSearch ? `&search=${encodeURIComponent(tamperSearch)}` : ""
-      const mcpSearchParam = mcpSearch ? `&search=${encodeURIComponent(mcpSearch)}` : ""
+      const searchParam = debouncedSearch ? `&search=${encodeURIComponent(debouncedSearch)}` : ""
+      const tamperSearchParam = debouncedTamperSearch ? `&search=${encodeURIComponent(debouncedTamperSearch)}` : ""
+      const mcpSearchParam = debouncedMcpSearch ? `&search=${encodeURIComponent(debouncedMcpSearch)}` : ""
 
       const [apiRes, tamperRes, mcpRes] = await Promise.all([
         fetch(`/manage/api/logs?page=${apiPagination.page}&limit=${apiPagination.limit}&sort=${sort}${searchParam}`, { credentials: "include" }),
@@ -177,7 +191,7 @@ export function Logs() {
     } finally {
       setLoading(false)
     }
-  }, [apiPagination.page, apiPagination.limit, tamperPagination.page, tamperPagination.limit, mcpPagination.page, mcpPagination.limit, sort, tamperSort, mcpSort, search, tamperSearch, mcpSearch])
+  }, [apiPagination.page, apiPagination.limit, tamperPagination.page, tamperPagination.limit, mcpPagination.page, mcpPagination.limit, sort, tamperSort, mcpSort, debouncedSearch, debouncedTamperSearch, debouncedMcpSearch])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -203,7 +217,7 @@ export function Logs() {
 
   function handleSearch() {
     setApiPagination(prev => ({ ...prev, page: 1 }))
-    fetchLogs()
+    setDebouncedSearch(search)
   }
 
   function handleSearchKeyDown(e: React.KeyboardEvent) {
@@ -212,7 +226,7 @@ export function Logs() {
 
   function handleTamperSearch() {
     setTamperPagination(prev => ({ ...prev, page: 1 }))
-    fetchLogs()
+    setDebouncedTamperSearch(tamperSearch)
   }
 
   function handleTamperSearchKeyDown(e: React.KeyboardEvent) {
@@ -221,7 +235,7 @@ export function Logs() {
 
   function handleMcpSearch() {
     setMcpPagination(prev => ({ ...prev, page: 1 }))
-    fetchLogs()
+    setDebouncedMcpSearch(mcpSearch)
   }
 
   function handleMcpSearchKeyDown(e: React.KeyboardEvent) {

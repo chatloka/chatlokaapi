@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { useEffect, useState, useCallback, useRef } from "react"
+import { toWIB } from "@/lib/dates"
 import { useNavigate } from "react-router-dom"
 import {
   Card,
@@ -81,20 +81,6 @@ interface Pagination {
   totalPages: number
 }
 
-function toWIB(dateStr: string | null) {
-  if (!dateStr) return "-"
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-}
-
 function getStatusBadge(status: string) {
   switch (status) {
     case "open":
@@ -173,12 +159,23 @@ export function Tickets() {
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState<TicketStats>({ total: 0, open: 0, pending: 0, closed: 0 })
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
   const [priorityFilter, setPriorityFilter] = useState("all")
   const [sort, setSort] = useState("newest")
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0, totalPages: 0 })
+  const searchTimerRef = useRef<number | null>(null)
+
+  // Debounce the live search input; submitting flushes it immediately.
+  useEffect(() => {
+    if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = window.setTimeout(() => setDebouncedSearch(search), 300)
+    return () => {
+      if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current)
+    }
+  }, [search])
 
   const fetchTickets = useCallback(async () => {
     try {
@@ -191,7 +188,7 @@ export function Tickets() {
       if (statusFilter !== "all") params.set("status", statusFilter)
       if (categoryFilter !== "all") params.set("category", categoryFilter)
       if (priorityFilter !== "all") params.set("priority", priorityFilter)
-      if (search) params.set("search", search)
+      if (debouncedSearch) params.set("search", debouncedSearch)
 
       const res = await fetch(`/manage/api/tickets?${params}`, { credentials: "include" })
       if (res.ok) {
@@ -204,7 +201,7 @@ export function Tickets() {
     } finally {
       setLoading(false)
     }
-  }, [page, statusFilter, categoryFilter, priorityFilter, sort, search])
+  }, [page, statusFilter, categoryFilter, priorityFilter, sort, debouncedSearch])
 
   const fetchStats = useCallback(async () => {
     try {
@@ -228,8 +225,13 @@ export function Tickets() {
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault()
+    // Flush any pending debounce so the submitted query applies immediately.
+    if (searchTimerRef.current !== null) {
+      window.clearTimeout(searchTimerRef.current)
+      searchTimerRef.current = null
+    }
     setPage(1)
-    fetchTickets()
+    setDebouncedSearch(search.trim())
   }
 
   return (

@@ -229,12 +229,8 @@ async function ticketAttachments(ctx: BotCtx, query: TelegramCallbackQuery, part
   const id = Number(parts[0])
   const ticket = await kit.ticketService.getTicketById(id)
   if (!ticket || !query.message) return
-  const messages = await kit.ticketService.getTicketMessages(ticket.id)
-  const attachments: TicketAttachment[] = []
-  for (const m of messages) {
-    const atts = await kit.ticketService.getMessageAttachments(m.id)
-    attachments.push(...atts)
-  }
+  const messagesWithAttachments = await kit.ticketService.getTicketMessagesWithAttachments(ticket.id, { includeBodies: false })
+  const attachments: TicketAttachment[] = messagesWithAttachments.flatMap((m) => m.attachments)
 
   if (attachments.length === 0) {
     await kit.editMessage(query.from.id, query.message.message_id, `📎 Tidak ada attachment untuk <b>${escapeHtml(ticket.ticket_number)}</b>.`, { parse_mode: 'HTML' })

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
 import {
   Card,
   CardContent,
@@ -126,11 +126,6 @@ export function Dashboard() {
     { name: "Client Err", count: stats.apiStats.clientError },
     { name: "Server Err", count: stats.apiStats.serverError },
   ] : []
-
-  function toWIB(dateStr: string) {
-    const d = parseDbDate(dateStr)
-    return d.toLocaleString("en-GB", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
-  }
 
   return (
     <div className="space-y-6">

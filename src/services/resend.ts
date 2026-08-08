@@ -1,4 +1,5 @@
 import type { CloudflareBindings } from '../types'
+import { stripControlChars } from './sanitize'
 
 export interface ResendEmailOptions {
   from: string
@@ -66,9 +67,12 @@ export class ResendService {
 
   async sendEmail(options: ResendEmailOptions): Promise<ResendSendResponse> {
     const body: Record<string, unknown> = {
-      from: options.from,
+      // Defense in depth at the service boundary: strip CR/LF and other
+      // control characters that could smuggle header/body separators into
+      // user-influenced fields.
+      from: stripControlChars(options.from),
       to: options.to,
-      subject: options.subject,
+      subject: stripControlChars(options.subject),
     }
 
     if (options.cc && options.cc.length > 0) body.cc = options.cc
@@ -76,7 +80,13 @@ export class ResendService {
     if (options.html) body.html = options.html
     if (options.text) body.text = options.text
     if (options.reply_to) body.reply_to = options.reply_to
-    if (options.headers) body.headers = options.headers
+    if (options.headers) {
+      const headers: Record<string, string> = {}
+      for (const [key, value] of Object.entries(options.headers)) {
+        headers[stripControlChars(key)] = stripControlChars(value)
+      }
+      body.headers = headers
+    }
     if (options.attachments) {
       body.attachments = options.attachments.map((a) => ({
         filename: a.filename,
@@ -152,11 +162,32 @@ export class ResendService {
     payload: string,
     headers: { 'svix-id': string; 'svix-timestamp': string; 'svix-signature': string }
   ): Promise<boolean> {
-    const toSign = `${headers['svix-id']}.${headers['svix-timestamp']}.${payload}`
+    const svixId = headers['svix-id'] || ''
+    const svixTimestamp = headers['svix-timestamp'] || ''
+    const svixSignature = headers['svix-signature'] || ''
+    if (!svixId || !svixTimestamp || !svixSignature) return false
+
+    // Freshness check: svix-timestamp is unix seconds since epoch. Reject
+    // timestamps more than 300 s away from now so captured webhooks cannot
+    // be replayed later.
+    const timestampSeconds = parseInt(svixTimestamp, 10)
+    if (!Number.isFinite(timestampSeconds)) return false
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    if (Math.abs(nowSeconds - timestampSeconds) > 300) return false
+
+    const toSign = `${svixId}.${svixTimestamp}.${payload}`
 
     // Remove whsec_ prefix and decode base64
     const secretBase64 = this.webhookSecret.replace('whsec_', '')
-    const keyData = Uint8Array.from(atob(secretBase64), (c) => c.charCodeAt(0))
+    let keyData: Uint8Array<ArrayBuffer>
+    try {
+      const raw = atob(secretBase64)
+      const bytes = new Uint8Array(raw.length)
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+      keyData = bytes
+    } catch {
+      return false
+    }
 
     const key = await crypto.subtle.importKey(
       'raw',
@@ -166,19 +197,32 @@ export class ResendService {
       ['verify'],
     )
 
-    // Get signature (format: "v1,<signature>")
-    const svixSignature = headers['svix-signature']
-    const signatureParts = svixSignature.split(',')
-    if (signatureParts.length < 2) return false
+    // The svix-signature header is a space-delimited list of "v1,<base64>"
+    // entries (multiple entries appear during key rotation). Any entry whose
+    // version is 'v1' and whose HMAC matches passes. crypto.subtle.verify is
+    // constant-time.
+    const entries = svixSignature.split(' ')
+    for (const entry of entries) {
+      const [version, signatureBase64] = entry.split(',')
+      if (version !== 'v1' || !signatureBase64) continue
+      let signatureBytes: Uint8Array<ArrayBuffer>
+      try {
+        const raw = atob(signatureBase64)
+        const bytes = new Uint8Array(raw.length)
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+        signatureBytes = bytes
+      } catch {
+        continue
+      }
+      const valid = await crypto.subtle.verify(
+        'HMAC',
+        key,
+        signatureBytes,
+        new TextEncoder().encode(toSign),
+      )
+      if (valid) return true
+    }
 
-    const signatureBase64 = signatureParts[1]
-    const signatureBytes = Uint8Array.from(atob(signatureBase64), (c) => c.charCodeAt(0))
-
-    return crypto.subtle.verify(
-      'HMAC',
-      key,
-      signatureBytes,
-      new TextEncoder().encode(toSign),
-    )
+    return false
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { formatFileSize, formatDate } from "@/lib/format"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useParams, useNavigate } from "react-router-dom"
 import {
   Card,
@@ -38,27 +39,6 @@ interface AppVersion {
   created_by: string | null
 }
 
-function formatFileSize(bytes: number | null): string {
-  if (bytes === null || bytes === undefined) return "—"
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function formatDate(value: string | null | undefined): string {
-  if (!value) return "—"
-  const d = parseDbDate(value)
-  if (Number.isNaN(d.getTime())) return value
-  return d.toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
 export function ReleaseDetail() {
   const { version } = useParams<{ version: string }>()
   const navigate = useNavigate()
@@ -66,6 +46,7 @@ export function ReleaseDetail() {
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const fetchRelease = useCallback(async () => {
     try {
@@ -89,7 +70,6 @@ export function ReleaseDetail() {
 
   async function handleDelete() {
     if (!release) return
-    if (!window.confirm(`Delete release v${release.version}? This cannot be undone.`)) return
     setDeleting(true)
     try {
       const res = await fetch(`/manage/api/app-versions/${release.version}`, {
@@ -104,6 +84,7 @@ export function ReleaseDetail() {
       toast.error(err instanceof Error ? err.message : "Delete failed")
     } finally {
       setDeleting(false)
+      setConfirmOpen(false)
     }
   }
 
@@ -174,7 +155,7 @@ export function ReleaseDetail() {
           </div>
         </div>
         {release.is_latest !== 1 && (
-          <Button variant="destructive" onClick={handleDelete} disabled={deleting} className="cursor-pointer">
+          <Button variant="destructive" onClick={() => setConfirmOpen(true)} disabled={deleting} className="cursor-pointer">
             {deleting ? <IconLoader className="mr-2 h-4 w-4 animate-spin" /> : <IconTrash className="mr-2 h-4 w-4" />}
             Delete Release
           </Button>
@@ -257,6 +238,16 @@ export function ReleaseDetail() {
           </CardContent>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={(open) => !open && !deleting && setConfirmOpen(false)}
+        title={release ? `Delete release v${release.version}?` : ""}
+        description="This cannot be undone. The zip stays in storage but the version row is removed."
+        confirmLabel="Delete"
+        loading={deleting}
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }

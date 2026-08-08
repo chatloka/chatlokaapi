@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { parseDbDate } from "@/lib/dates"
+import { initials } from "@/lib/format"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { useParams, useNavigate } from "react-router-dom"
 import {
   Card,
@@ -112,14 +114,6 @@ function formatDate(value: string | null | undefined): string {
   })
 }
 
-function initials(name: string | null, email: string): string {
-  const source = name?.trim() || email
-  const parts = source.split(/[\s,@.]+/).filter(Boolean)
-  const first = parts[0]?.[0] || ""
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : ""
-  return (first + last).toUpperCase()
-}
-
 function supportStatusOf(supportUntil: string | null): "active" | "expired" | "none" {
   if (!supportUntil) return "none"
   const end = new Date(supportUntil)
@@ -157,6 +151,10 @@ export function UserDetail() {
   const [nameDraft, setNameDraft] = useState("")
   const [notesDraft, setNotesDraft] = useState("")
   const [nameEditing, setNameEditing] = useState(false)
+
+  // Delete purchase confirm
+  const [deleteTarget, setDeleteTarget] = useState<Purchase | null>(null)
+  const [deletingPurchase, setDeletingPurchase] = useState(false)
 
   const fetchContact = useCallback(async () => {
     try {
@@ -277,19 +275,25 @@ export function UserDetail() {
       .finally(() => setEditSaving(false))
   }
 
-  async function deletePurchase(purchase: Purchase) {
-    if (!window.confirm(`Hapus purchase code ${purchase.purchase_code}?`)) return
+  async function deletePurchase() {
+    if (!deleteTarget) return
+    setDeletingPurchase(true)
     try {
-      const res = await fetch(`/manage/api/contacts/${id}/purchases/${purchase.id}`, {
+      const res = await fetch(`/manage/api/contacts/${id}/purchases/${deleteTarget.id}`, {
         method: "DELETE",
         credentials: "include",
       })
       if (res.ok) {
         toast.success("Purchase dihapus")
+        setDeleteTarget(null)
         await fetchContact()
+      } else {
+        toast.error("Gagal menghapus purchase")
       }
     } catch {
       toast.error("Gagal menghapus purchase")
+    } finally {
+      setDeletingPurchase(false)
     }
   }
 
@@ -576,7 +580,7 @@ export function UserDetail() {
                           <Button variant="ghost" size="sm" className="h-7 w-7 cursor-pointer p-0" onClick={() => openEdit(p)} title="Edit">
                             <IconPencil size={14} />
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-7 w-7 cursor-pointer p-0 text-destructive" onClick={() => deletePurchase(p)} title="Hapus">
+                          <Button variant="ghost" size="sm" className="h-7 w-7 cursor-pointer p-0 text-destructive" onClick={() => setDeleteTarget(p)} title="Hapus">
                             <IconTrash size={14} />
                           </Button>
                         </div>
@@ -755,6 +759,17 @@ export function UserDetail() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && !deletingPurchase && setDeleteTarget(null)}
+        title={deleteTarget ? `Hapus purchase code ${deleteTarget.purchase_code}?` : ""}
+        description="Purchase akan dilepas dari kontak ini. Bila ini purchase terakhir, kontak dikembalikan menjadi Lead."
+        confirmLabel="Hapus"
+        cancelLabel="Batal"
+        loading={deletingPurchase}
+        onConfirm={deletePurchase}
+      />
     </div>
   )
 }

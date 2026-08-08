@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -14,11 +15,11 @@ import {
   IconSearch,
   IconGitMerge,
   IconTicket,
-  IconLoader,
   IconX,
   IconPlus,
   IconArrowsExchange,
   IconCheck,
+  IconLoader,
 } from "@tabler/icons-react";
 
 interface Ticket {
@@ -137,7 +138,7 @@ export function MergeTicketDialog({
       }
       toast.success(
         mode === "new"
-          ? `Created ${data?.target_ticket_number} and merged 3 tickets`
+          ? `Created ${data?.target_ticket_number} and merged ${selected.length} ticket${selected.length !== 1 ? "s" : ""}`
           : "Tickets merged successfully"
       );
       onOpenChange(false);
@@ -231,7 +232,7 @@ export function MergeTicketDialog({
               <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-md border border-border p-1.5">
                 {searching && (
                   <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-                    <IconLoader size={12} className="animate-spin" /> Searching...
+                    <Skeleton className="h-3.5 w-3.5 rounded-full" /> Searching...
                   </div>
                 )}
                 {!searching && results.length === 0 && (

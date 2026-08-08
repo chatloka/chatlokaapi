@@ -28,8 +28,11 @@ async function handleReplyDraft(ctx: BotCtx, message: TelegramMessage, pending: 
   const chatId = message.chat.id
   const incomingText = (message.text || message.caption || '').trim()
 
-  // Cancel any previous draft with "cancel" — return to the ticket screen.
-  if (incomingText.toLowerCase() === 'cancel') {
+  // Cancel any previous draft with "cancel" (plain word, /cancel command, or
+  // /cancel@<bot-username>) — return to the ticket screen.
+  const incomingLower = incomingText.toLowerCase()
+  const isCancel = incomingLower === 'cancel' || incomingLower === '/cancel' || incomingLower.startsWith('/cancel@')
+  if (isCancel) {
     await kit.clearChatState(chatId)
     if (pending.ticket_id) {
       const ticket = await kit.ticketService.getTicketById(pending.ticket_id)
@@ -142,99 +145,139 @@ async function replySend(ctx: BotCtx): Promise<void> {
 
   const bodyText = state.text || ''
   const attachments = state.attachments || []
-  const resend = new ResendService(kit.env)
 
-  const sentAt = new Date().toLocaleString('id-ID', {
-    timeZone: 'Asia/Jakarta',
-    year: 'numeric', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-  const footerHtml = `
+  // Claim the draft FIRST: clear the chat state before sending the email, so a
+  // redelivered "reply_send" callback cannot send the same reply twice.
+  await kit.clearChatState(ctx.chatId)
+
+  let emailSent = false
+  try {
+    const resend = new ResendService(kit.env)
+
+    const sentAt = new Date().toLocaleString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    })
+    const footerHtml = `
       <div style="margin-top:24px;padding-top:12px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px;line-height:1.5;">
         <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">Ticket ID: ${ticket.ticket_number}</div>
         <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:2px;">Sent at: ${sentAt}</div>
       </div>`
-  const bodyHtml = `${bodyText.split('\n').map((l) => escapeHtml(l)).join('<br/>')}\n${footerHtml}`
+    const bodyHtml = `${bodyText.split('\n').map((l) => escapeHtml(l)).join('<br/>')}\n${footerHtml}`
 
-  const messages = await kit.ticketService.getTicketMessages(ticket.id)
-  const lastMessage = messages[messages.length - 1]
-  const allReferences = await kit.ticketService.getAllReferences(ticket.id)
+    const messages = await kit.ticketService.getTicketMessages(ticket.id)
+    const lastMessage = messages[messages.length - 1]
+    const allReferences = await kit.ticketService.getAllReferences(ticket.id)
 
-  const headers: Record<string, string> = {}
-  if (lastMessage?.message_id) {
-    headers['In-Reply-To'] = lastMessage.message_id
-    if (allReferences.length > 0) {
-      headers['References'] = [...allReferences, lastMessage.message_id].join(' ')
+    const headers: Record<string, string> = {}
+    if (lastMessage?.message_id) {
+      headers['In-Reply-To'] = lastMessage.message_id
+      if (allReferences.length > 0) {
+        headers['References'] = [...allReferences, lastMessage.message_id].join(' ')
+      }
     }
-  }
 
-  const fromName = kit.env.TICKET_FROM_NAME || 'Chatloka Support'
-  const fromEmail = kit.env.TICKET_FROM_EMAIL || 'contact@support.chatloka.net'
-  const from = `${fromName} <${fromEmail}>`
+    const fromName = kit.env.TICKET_FROM_NAME || 'Chatloka Support'
+    const fromEmail = kit.env.TICKET_FROM_EMAIL || 'contact@support.chatloka.net'
+    const from = `${fromName} <${fromEmail}>`
 
-  const emailAttachments: ResendAttachment[] = []
-  for (const a of attachments) {
-    if (!a.r2_path) continue
-    try {
-      const object = await kit.bucket.get(a.r2_path)
-      if (!object) continue
-      const buffer = await object.arrayBuffer()
-      const base64 = bufferToBase64(buffer)
-      emailAttachments.push({ filename: a.filename, content: base64, content_type: a.content_type })
-    } catch {
-      /* skip broken attachment */
+    const emailAttachments: ResendAttachment[] = []
+    for (const a of attachments) {
+      if (!a.r2_path) continue
+      try {
+        const object = await kit.bucket.get(a.r2_path)
+        if (!object) continue
+        const buffer = await object.arrayBuffer()
+        const base64 = bufferToBase64(buffer)
+        emailAttachments.push({ filename: a.filename, content: base64, content_type: a.content_type })
+      } catch {
+        /* skip broken attachment */
+      }
     }
-  }
 
-  const result = await resend.sendEmail({
-    from,
-    to: [ticket.from_email],
-    subject: `Re: [${ticket.ticket_number}] ${ticket.subject}`,
-    html: bodyHtml,
-    text: bodyText + `\n\n--\nTicket ID: ${ticket.ticket_number}\nSent at: ${sentAt}`,
-    headers,
-    attachments: emailAttachments.length > 0 ? emailAttachments : undefined,
-  })
-
-  const outbound = await kit.ticketService.createMessage({
-    ticket_id: ticket.id,
-    direction: 'outbound',
-    from_email: fromEmail,
-    to_email: ticket.from_email,
-    subject: `Re: ${ticket.subject}`,
-    body_html: bodyHtml,
-    body_text: bodyText,
-    resend_email_id: result.id,
-    has_attachments: emailAttachments.length > 0 ? 1 : 0,
-  })
-
-  for (const a of emailAttachments) {
-    const att = attachments.find((x) => x.filename === a.filename)
-    await kit.ticketService.createAttachment({
-      ticket_message_id: outbound.id,
-      ticket_id: ticket.id,
-      filename: a.filename,
-      content_type: a.content_type || 'application/octet-stream',
-      r2_path: att?.r2_path || `telegram-pending/${ctx.chatId}/unknown/${a.filename}`,
+    const result = await resend.sendEmail({
+      from,
+      to: [ticket.from_email],
+      subject: `Re: [${ticket.ticket_number}] ${ticket.subject}`,
+      html: bodyHtml,
+      text: bodyText + `\n\n--\nTicket ID: ${ticket.ticket_number}\nSent at: ${sentAt}`,
+      headers,
+      attachments: emailAttachments.length > 0 ? emailAttachments : undefined,
     })
+    emailSent = true
+
+    const outbound = await kit.ticketService.createMessage({
+      ticket_id: ticket.id,
+      direction: 'outbound',
+      from_email: fromEmail,
+      to_email: ticket.from_email,
+      subject: `Re: ${ticket.subject}`,
+      body_html: bodyHtml,
+      body_text: bodyText,
+      resend_email_id: result.id,
+      has_attachments: emailAttachments.length > 0 ? 1 : 0,
+    })
+
+    for (const a of emailAttachments) {
+      const att = attachments.find((x) => x.filename === a.filename)
+      await kit.ticketService.createAttachment({
+        ticket_message_id: outbound.id,
+        ticket_id: ticket.id,
+        filename: a.filename,
+        content_type: a.content_type || 'application/octet-stream',
+        r2_path: att?.r2_path || `telegram-pending/${ctx.chatId}/unknown/${a.filename}`,
+      })
+    }
+
+    await kit.sendMessage(
+      ctx.chatId,
+      `✅ Reply terkirim ke <b>${escapeHtml(ticket.ticket_number)}</b> (${escapeHtml(ticket.from_email)})`,
+      { parse_mode: 'HTML', reply_markup: inlineKeyboard([[{ text: '👁 View', callback_data: `ticket_view:${ticket.id}` }]]) },
+    )
+
+    await kit.logAction({
+      direction: 'outbound',
+      action: 'reply_send',
+      chat_id: ctx.chatId,
+      ticket_number: ticket.ticket_number,
+      target: ticket.from_email,
+      message: bodyText,
+      status: 'success',
+    })
+  } catch (err) {
+    console.error('[Telegram] reply_send failed:', err)
+    // Only restore the draft when the email was NOT sent yet — restoring it
+    // after a successful send would produce a duplicate email on retry.
+    if (!emailSent) {
+      try {
+        await kit.setChatState(ctx.chatId, state)
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      await kit.logAction({
+        direction: 'outbound',
+        action: 'reply_send',
+        chat_id: ctx.chatId,
+        ticket_number: ticket.ticket_number,
+        target: ticket.from_email,
+        message: bodyText,
+        status: 'error',
+        error_message: err instanceof Error ? err.message : String(err),
+      })
+    } catch {
+      /* ignore */
+    }
+    await kit.sendMessage(
+      ctx.chatId,
+      emailSent
+        ? `❌ Email sudah terkirim, tapi ada kendala menyimpan ke panel — cek ticket di panel admin.`
+        : `❌ Gagal mengirim reply. Draft dikembalikan — coba lagi.`,
+      { parse_mode: 'HTML' },
+    )
   }
-
-  await kit.clearChatState(ctx.chatId)
-  await kit.sendMessage(
-    ctx.chatId,
-    `✅ Reply terkirim ke <b>${escapeHtml(ticket.ticket_number)}</b> (${escapeHtml(ticket.from_email)})`,
-    { parse_mode: 'HTML', reply_markup: inlineKeyboard([[{ text: '👁 View', callback_data: `ticket_view:${ticket.id}` }]]) },
-  )
-
-  await kit.logAction({
-    direction: 'outbound',
-    action: 'reply_send',
-    chat_id: ctx.chatId,
-    ticket_number: ticket.ticket_number,
-    target: ticket.from_email,
-    message: bodyText,
-    status: 'success',
-  })
 }
 
 async function replyCancel(ctx: BotCtx): Promise<void> {

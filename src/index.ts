@@ -19,6 +19,7 @@ import { adminRoutes } from './admin'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { createMcpServer } from './mcp'
 import { getMigrations } from 'better-auth/db/migration'
+import { sanitizeHtml, stripControlChars } from './services/sanitize'
 import type {
   ActivateRequest,
   CheckUpdatesRequest,
@@ -56,14 +57,17 @@ app.use('/api/*', async (c, next) => {
   if (method === 'POST' || method === 'PUT') {
     // /api/uploads/* bodies are raw binary streams; never buffer them for logging.
     if (!endpoint.startsWith('/api/uploads/')) {
-      try {
-        const cloned = c.req.raw.clone()
-        const body = await cloned.json() as Record<string, unknown>
-        purchaseCode = (body.purchase_code as string) || (c.req.header('x-license-key') as string | undefined) || null
-        domain = (body.domain as string) || null
-        requestBodySize = JSON.stringify(body).length
-      } catch {
-        // Body might not be JSON, that's fine
+      const contentType = c.req.header('content-type') || ''
+      if (contentType.includes('application/json')) {
+        try {
+          const cloned = c.req.raw.clone()
+          const body = await cloned.json() as Record<string, unknown>
+          purchaseCode = (body.purchase_code as string) || (c.req.header('x-license-key') as string | undefined) || null
+          domain = (body.domain as string) || null
+          requestBodySize = JSON.stringify(body).length
+        } catch {
+          // Body might not be JSON, that's fine
+        }
       }
     }
   } else {
@@ -79,17 +83,29 @@ app.use('/api/*', async (c, next) => {
     statusCode = 500
     throw error
   } finally {
-    const responseTimeMs = Date.now() - startTime
-
-    try {
-      await c.env.DB.prepare(
-        `INSERT INTO api_logs (method, endpoint, ip_address, user_agent, purchase_code, domain, status_code, response_time_ms, request_size_bytes, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+    // Skip logging rate-limited requests (they can be 99% of traffic under
+    // attack) and write the log in the background so it never adds latency.
+    if (statusCode !== 429) {
+      const responseTimeMs = Date.now() - startTime
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            await c.env.DB.prepare(
+              `INSERT INTO api_logs (method, endpoint, ip_address, user_agent, purchase_code, domain, status_code, response_time_ms, request_size_bytes, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+            )
+              .bind(method, endpoint, ip, userAgent, purchaseCode, domain, statusCode, responseTimeMs, requestBodySize)
+              .run()
+            // Probabilistic retention: ~1 in 500 requests also purges logs
+            // older than 30 days so the table cannot grow without bound.
+            if (Math.random() < 0.002) {
+              await c.env.DB.prepare("DELETE FROM api_logs WHERE created_at < datetime('now', '-30 days')").run()
+            }
+          } catch (e) {
+            console.error('[API Log] Failed to write log:', e)
+          }
+        })(),
       )
-        .bind(method, endpoint, ip, userAgent, purchaseCode, domain, statusCode, responseTimeMs, requestBodySize)
-        .run()
-    } catch (e) {
-      console.error('[API Log] Failed to write log:', e)
     }
   }
 })
@@ -146,8 +162,9 @@ async function logMcpRequest(
 
 async function enforceRateLimit(c: Context, limiter: RateLimit, scope: string) {
   const ip = c.req.header('cf-connecting-ip') || 'unknown-ip'
-  const apiKey = c.req.header('x-license-key') || 'anon'
-  const key = `${scope}:${apiKey}:${ip}`
+  // Key by IP only — never by a client-supplied header, which an attacker can
+  // rotate to bypass the limit.
+  const key = `${scope}:${ip}`
   const { success } = await limiter.limit({ key })
   if (!success) {
     return c.json(
@@ -162,10 +179,11 @@ async function enforceRateLimit(c: Context, limiter: RateLimit, scope: string) {
   return null
 }
 
-async function enforceRateLimitByPurchaseCode(c: Context, limiter: RateLimit, scope: string, purchaseCode: string) {
+async function enforceRateLimitByPurchaseCode(c: Context, limiter: RateLimit, scope: string, _purchaseCode: string) {
   const ip = c.req.header('cf-connecting-ip') || 'unknown-ip'
-  const safeKey = (purchaseCode || 'anon').replace(/[^a-zA-Z0-9_-]/g, '_')
-  const key = `${scope}:${safeKey}:${ip}`
+  // Key by IP only — never by a client-supplied header, which an attacker can
+  // rotate to bypass the limit.
+  const key = `${scope}:${ip}`
   const { success } = await limiter.limit({ key })
   if (!success) {
     return c.json(
@@ -196,7 +214,9 @@ function maskDomain(domain: string): string {
 app.use('/*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-License-Key', 'X-Download-Token', 'X-Checksum-SHA256', 'X-ChatOn-Version'],
+  // Authorization is intentionally NOT allowed: this API is public and has no
+  // cross-origin Bearer flows — allowing the header invites token exfiltration.
+  allowHeaders: ['Content-Type', 'X-License-Key', 'X-Download-Token', 'X-Checksum-SHA256', 'X-ChatOn-Version'],
 }))
 
 app.get('/', (c) => {
@@ -477,10 +497,28 @@ app.post('/api/validate', async (c) => {
     let integrityAction: 'warn' | 'suspend' = 'warn'
 
     if (app_version && file_checksums) {
+      // Empty checksum object = client-side integrity checking is broken
+      // (e.g. the files are missing) — reject explicitly so the client can
+      // re-sync instead of silently skipping verification.
+      if (Object.keys(file_checksums).length === 0) {
+        return c.json({
+          success: false,
+          message: 'file_checksums must not be empty when app_version is provided',
+          error_code: 'MISSING_CHECKSUMS',
+        }, 400)
+      }
       const masterChecksums = await licenseService.getReleaseChecksums(app_version)
       for (const [path, clientHash] of Object.entries(file_checksums)) {
         const serverHash = masterChecksums[path]
         if (serverHash && serverHash !== clientHash) {
+          integrityFailures.push(path)
+        }
+      }
+
+      // Files in the master release set that the client did not report are
+      // also a tamper signal (files deleted/renamed on the install).
+      for (const [path] of Object.entries(masterChecksums)) {
+        if (!(path in file_checksums)) {
           integrityFailures.push(path)
         }
       }
@@ -817,11 +855,19 @@ app.put('/api/uploads/:token', async (c) => {
   if (!jti) return c.json({ error: 'token_invalid', message: 'Missing token id' }, 401)
   if (typeof key !== 'string' || !key) return c.json({ error: 'token_invalid', message: 'Missing upload target in token' }, 401)
 
-  // Single-use: an upload token may only ever PUT one file.
+  // Single-use: claim the token FIRST. The unique index on used_tokens makes
+  // the INSERT the atomic claim — two concurrent PUTs with the same token
+  // cannot both succeed (previously the SELECT-then-INSERT left a TOCTOU gap).
   const isApp = target === 'app'
   const usedTable = isApp ? 'app_used_tokens' : 'used_tokens'
-  const alreadyUsed = await c.env.DB.prepare(`SELECT jti FROM ${usedTable} WHERE jti = ? LIMIT 1`).bind(jti).first()
-  if (alreadyUsed) return c.json({ error: 'token_already_used', message: 'This upload token has already been used' }, 401)
+  try {
+    await c.env.DB.prepare(`INSERT INTO ${usedTable} (jti, expires_at) VALUES (?, ?)`)
+      .bind(jti, new Date(payload.exp * 1000).toISOString())
+      .run()
+  } catch (e: any) {
+    console.error('[Upload] Token claim failed (possibly already used):', e?.message || e)
+    return c.json({ error: 'token_already_used', message: 'This upload token has already been used' }, 401)
+  }
 
   const body = c.req.raw.body
   if (!body) return c.json({ error: 'invalid_request', message: 'Request body (the file) is required' }, 400)
@@ -859,10 +905,6 @@ app.put('/api/uploads/:token', async (c) => {
   } catch (e: any) {
     return c.json({ error: 'upload_failed', message: e?.message || 'Failed to store file' }, 500)
   }
-
-  await c.env.DB.prepare(`INSERT INTO ${usedTable} (jti, expires_at) VALUES (?, ?)`)
-    .bind(jti, new Date(payload.exp * 1000).toISOString())
-    .run()
 
   return c.json({
     success: true,
@@ -1484,6 +1526,46 @@ app.post('/api/webhooks/resend', async (c) => {
       return c.json({ received: true })
     }
 
+    // Idempotency: Resend retries deliveries that fail (and occasionally
+    // duplicates events). Only ingest each email once — dedupe by resend
+    // email_id, falling back to the message_id for legacy events.
+    const db = c.env.DB
+    const eventEmailId = event.data?.email_id || null
+    const eventMessageId = event.data?.message_id || null
+    let existingMessage: { id: number; ticket_id: number } | null = null
+    if (eventEmailId) {
+      existingMessage = await db.prepare(
+        'SELECT id, ticket_id FROM ticket_messages WHERE resend_email_id = ? LIMIT 1'
+      ).bind(eventEmailId).first() as { id: number; ticket_id: number } | null
+    }
+    if (!existingMessage && typeof eventMessageId === 'string' && eventMessageId) {
+      existingMessage = await db.prepare(
+        "SELECT id, ticket_id FROM ticket_messages WHERE message_id = ? AND direction = 'inbound' LIMIT 1"
+      ).bind(eventMessageId).first() as { id: number; ticket_id: number } | null
+    }
+    if (existingMessage) {
+      // Repair path: if the first attempt died between the message insert and
+      // the email-thread insert, recreate the thread row so In-Reply-To
+      // routing keeps working. The message row itself is already intact.
+      try {
+        await db.prepare(
+          'INSERT OR IGNORE INTO ticket_email_threads (ticket_id, message_id, parent_message_id) VALUES (?, ?, NULL)'
+        ).bind(existingMessage.ticket_id, typeof eventMessageId === 'string' ? eventMessageId : null).run()
+      } catch (threadErr) {
+        console.error('[Resend Webhook] Thread repair failed:', threadErr)
+      }
+      await logWebhook(c.env.DB, {
+        provider: 'resend',
+        event_type: 'email.received',
+        source_ip: c.req.header('cf-connecting-ip') || 'unknown',
+        raw_payload: payload,
+        handled: 1,
+        error_message: 'duplicate_event',
+        duration_ms: Date.now() - start,
+      })
+      return c.json({ received: true, duplicate: true })
+    }
+
     // IMPORTANT: Resend routes this domain with catch-all, so emails to any
     // xxx@support.chatloka.net reach this webhook. Only process emails actually
     // addressed to the support inbox (To/Cc/Bcc/received_for); everything else
@@ -1512,7 +1594,6 @@ app.post('/api/webhooks/resend', async (c) => {
       return c.json({ received: true })
     }
 
-    const db = c.env.DB
     const ticketService = new TicketService(db)
 
     // Check if this is a reply (has In-Reply-To)
@@ -1603,26 +1684,39 @@ app.post('/api/webhooks/resend', async (c) => {
 
     // 4. Fallback: customer has an open ticket open — keep appending to it
     if (!ticket) {
-      ticket = await ticketService.findOpenTicketBySender(event.data.from)
+      ticket = await ticketService.findOpenTicketBySender(senderEmail)
     }
 
-    // Create new ticket if not found
+    // Create new ticket if not found. generateTicketNumber() is MAX(id)+1, so
+    // a concurrent insert can win the race — retry on UNIQUE collision.
     if (!ticket) {
-      const ticketNumber = await ticketService.generateTicketNumber()
-      ticket = await ticketService.createTicket({
-        ticket_number: ticketNumber,
-        from_email: event.data.from,
-        from_name: senderName,
-        subject: event.data.subject,
-      })
-      isNewTicket = true
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const ticketNumber = await ticketService.generateTicketNumber()
+          ticket = await ticketService.createTicket({
+            ticket_number: ticketNumber,
+            from_email: event.data.from,
+            from_name: senderName,
+            subject: event.data.subject,
+          })
+          isNewTicket = true
+          break
+        } catch (err: any) {
+          lastErr = err
+          const raw = err?.message ? String(err.message) : String(err)
+          if (!raw.includes('UNIQUE')) throw err
+          console.error(`[Resend Webhook] Ticket number collision (attempt ${attempt + 1}), retrying:`, raw)
+        }
+      }
+      if (!ticket) throw lastErr || new Error('Failed to create ticket')
     }
 
     // Upsert a contact record for the sender, linking the ticket to it so the
     // admin UI can show Lead/Customer + support status badges.
     try {
       const contactService = new ContactService(db)
-      const contact = await contactService.upsertContactFromEmail(event.data.from, senderName)
+      const contact = await contactService.upsertContactFromEmail(event.data.from, senderName, isNewTicket)
       if (!ticket.contact_id) {
         await ticketService.updateTicket(ticket.ticket_number, { contact_id: contact.id })
         ticket.contact_id = contact.id
@@ -1652,7 +1746,7 @@ app.post('/api/webhooks/resend', async (c) => {
         try {
           // Download attachment from Resend
           const downloadUrl = await resendService.getAttachmentDownloadUrl(event.data.email_id, att.id)
-          const attResponse = await fetch(downloadUrl)
+          const attResponse = await fetch(downloadUrl, { signal: AbortSignal.timeout(10_000) })
           if (attResponse.ok) {
             const attBuffer = await attResponse.arrayBuffer()
             const r2Path = `ticket-attachments/${ticket.ticket_number}/${event.data.email_id}/${att.filename}`
@@ -1678,17 +1772,18 @@ app.post('/api/webhooks/resend', async (c) => {
       }
     }
 
-    // Create message record
+    // Create message record (sanitize the stored HTML/text/subject so stored
+    // data can never smuggle scripts or CRLF injection)
     const message = await ticketService.createMessage({
       ticket_id: ticket.id,
       direction: 'inbound',
       from_email: event.data.from,
       to_email: event.data.to[0],
-      subject: event.data.subject,
-      body_html: email.html,
-      body_text: email.text,
-      resend_email_id: event.data.email_id,
-      message_id: event.data.message_id,
+      subject: stripControlChars(event.data.subject || ''),
+      body_html: sanitizeHtml(email.html || ''),
+      body_text: stripControlChars(email.text || ''),
+      resend_email_id: eventEmailId,
+      message_id: eventMessageId,
       in_reply_to: inReplyTo,
       references_header: references,
       has_attachments: attachmentRecords.length > 0 ? 1 : 0,
@@ -1720,8 +1815,8 @@ app.post('/api/webhooks/resend', async (c) => {
     //  - New ticket: confirm the ticket has been opened
     //  - Reopened ticket: confirm the ticket has been re-opened and will be attended
     if (event.data.from && (isNewTicket || wasReopened)) {
+      const nameForAck = ticket.from_name || senderName
       try {
-        const nameForAck = ticket.from_name || senderName
         await sendTicketAcknowledgement(
           c.env,
           ticketService,
@@ -1735,7 +1830,25 @@ app.post('/api/webhooks/resend', async (c) => {
           wasReopened,
         )
       } catch (ackErr) {
-        console.error('[Resend Webhook] Failed to send ticket acknowledgment:', ackErr)
+        // Retry once after a short delay — transient Resend hiccups happen.
+        console.error('[Resend Webhook] Ack failed, retrying once:', ackErr)
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 2000))
+          await sendTicketAcknowledgement(
+            c.env,
+            ticketService,
+            ticket,
+            event.data.from,
+            nameForAck,
+            event.data.subject || '',
+            messagePreview,
+            resendService,
+            event.data.message_id || null,
+            wasReopened,
+          )
+        } catch (ackErr2) {
+          console.error('[Resend Webhook] Failed to send ticket acknowledgment:', ackErr2)
+        }
       }
     }
 
@@ -1752,7 +1865,14 @@ app.post('/api/webhooks/resend', async (c) => {
             await db.prepare(
               "INSERT INTO ticket_ai_analyses (ticket_id, status, created_at, updated_at) VALUES (?, 'pending', datetime('now'), datetime('now'))"
             ).bind(ticket.id).run()
-            await c.env.TICKET_AI_WORKFLOW.create({ params: { ticket_id: ticket.id } })
+            try {
+              await c.env.TICKET_AI_WORKFLOW.create({ params: { ticket_id: ticket.id } })
+            } catch (aiErr) {
+              // Transient workflow-enqueue failure: leave the row 'pending' so
+              // a later retry / manual re-enqueue can still pick it up.
+              // Marking it 'failed' here would hide it from the UI poller.
+              console.error('[Resend Webhook] Failed to start AI workflow (row left pending):', aiErr)
+            }
           } catch (aiErr) {
             console.error('[Resend Webhook] Failed to enqueue AI analysis:', aiErr)
             await db.prepare(
@@ -1809,7 +1929,9 @@ app.post('/api/webhooks/resend', async (c) => {
     return c.json({ received: true })
   } catch (err) {
     console.error('[Resend Webhook] Error:', err)
-    // Log the failure (if we have the raw payload) then always 200 to prevent retries.
+    // Log the failure (if we have the raw payload), then return 500 — NOT a
+    // silent 200 — so Resend retries. The dedupe guard at the top makes
+    // retries safe: a re-delivered event is acked immediately.
     if (payload) {
       await logWebhook(c.env.DB, {
         provider: 'resend',
@@ -1819,7 +1941,7 @@ app.post('/api/webhooks/resend', async (c) => {
         duration_ms: Date.now() - start,
       })
     }
-    return c.json({ received: true })
+    return c.json({ received: false, error: 'internal' }, 500)
   }
 })
 
@@ -1848,16 +1970,28 @@ app.get('/api/realtime/ws', async (c) => {
   return stub.fetch(c.req.raw)
 })
 
-// Better Auth handler
+// Better Auth runs getMigrations() before every auth request; cache the result
+// per isolate (migrations are idempotent) and reset the cache if it ever fails.
+let authMigrationsPromise: Promise<void> | null = null
+
 app.all('/api/auth/*', async (c) => {
   try {
     const auth = createAuth(c.env)
-    const { runMigrations } = await getMigrations(auth.options)
-    await runMigrations()
+    if (!authMigrationsPromise) {
+      authMigrationsPromise = (async () => {
+        const { runMigrations } = await getMigrations(auth.options)
+        await runMigrations()
+      })().catch((err) => {
+        authMigrationsPromise = null
+        throw err
+      })
+    }
+    await authMigrationsPromise
     return await auth.handler(c.req.raw)
   } catch (err: any) {
     console.error('[Better Auth]', err?.message || err)
-    return c.json({ success: false, message: err?.message || 'Auth error' }, 500)
+    // Never leak internal error details to the client.
+    return c.json({ success: false, message: 'Authentication failed' }, 500)
   }
 })
 

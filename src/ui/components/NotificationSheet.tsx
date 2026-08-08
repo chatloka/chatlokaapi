@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { parseDbDate, toWIB } from "@/lib/dates"
 import { useNavigate } from "react-router-dom"
 import {
   IconBell,
@@ -41,17 +41,6 @@ const TYPE_META: Record<string, { label: string; icon: typeof IconTicket; color:
   ticket_replied: { label: "Reply sent", icon: IconMailForward, color: "text-emerald-500" },
   ticket_status_changed: { label: "Status changed", icon: IconCircleCheck, color: "text-sky-500" },
   ticket_reopened: { label: "Ticket re-opened", icon: IconRefresh, color: "text-orange-500" },
-}
-
-function toWIB(dateStr: string) {
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("id-ID", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 function timeAgoWIB(dateStr: string) {
@@ -349,7 +338,7 @@ export function NotificationSheet() {
               <div ref={sentinelRef} className="flex items-center justify-center py-3">
                 {loading && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-border border-t-primary" />
+                    <Skeleton className="h-3.5 w-3.5 rounded-full" />
                     Loading more…
                   </div>
                 )}

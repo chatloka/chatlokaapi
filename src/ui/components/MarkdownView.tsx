@@ -1,4 +1,4 @@
-import { useState, type ComponentProps } from "react"
+import { useState, useEffect, useRef, type ComponentProps } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
@@ -8,15 +8,23 @@ import { IconCheck, IconCopy } from "@tabler/icons-react"
 
 function CodeBlock({ className, children }: ComponentProps<"code">) {
   const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<number | null>(null)
   const match = /language-(\w+)/.exec(className || "")
   const language = match ? match[1] : "text"
   const code = String(children).replace(/\n$/, "")
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+    }
+  }, [])
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(code)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000)
     } catch {
       /* clipboard unavailable */
     }

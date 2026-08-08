@@ -93,73 +93,98 @@ export class TicketAiWorkflow extends WorkflowEntrypoint<CloudflareBindings, Tic
       },
     )
 
-    await step.do('store result', async () => {
-      const db = this.db()
+    await step.do(
+      'store result',
+      {
+        retries: { limit: 2, delay: '5 seconds', backoff: 'exponential' },
+        timeout: '1 minute',
+      },
+      async () => {
+        const db = this.db()
 
-      if (analysis.refusal || !analysis.result) {
+        if (analysis.refusal || !analysis.result) {
+          await db.prepare(
+            `UPDATE ticket_ai_analyses
+             SET status = 'failed',
+                 model = ?, workflow_instance_id = ?, refusal = ?,
+                 heuristic_injection = ?, prompt_chars = ?,
+                 input_tokens = ?, output_tokens = ?, latency_ms = ?,
+                 cost_usd = ?, error = ?, updated_at = datetime('now')
+             WHERE ticket_id = ?`
+          ).bind(
+            AI_MODEL,
+            event.instanceId,
+            analysis.refusal,
+            analysis.heuristicFlagged ? 1 : 0,
+            analysis.promptChars,
+            analysis.metrics.input_tokens,
+            analysis.metrics.output_tokens,
+            analysis.metrics.latency_ms,
+            estimateCostUsd(analysis.metrics.input_tokens, analysis.metrics.output_tokens),
+            analysis.refusal ? 'model refused to analyze' : 'no result',
+            ticketId,
+          ).run()
+          return
+        }
+
+        const r = analysis.result
+        try {
+          await db.prepare(
+            `UPDATE ticket_ai_analyses
+             SET status = 'completed',
+                 model = ?, workflow_instance_id = ?, schema_version = ?,
+                 summary = ?, category = ?, priority = ?, sentiment = ?,
+                 key_points = ?, suggested_steps = ?, tags = ?, confidence = ?,
+                 injection_detected = ?, injection_evidence = ?,
+                 heuristic_injection = ?, prompt_chars = ?,
+                 input_tokens = ?, output_tokens = ?, latency_ms = ?, cost_usd = ?,
+                 error = NULL, updated_at = datetime('now')
+             WHERE ticket_id = ?`
+          ).bind(
+            AI_MODEL,
+            event.instanceId,
+            AI_SCHEMA_VERSION,
+            r.summary,
+            r.category,
+            r.priority,
+            r.sentiment,
+            JSON.stringify(r.key_points),
+            JSON.stringify(r.suggested_steps),
+            JSON.stringify(r.tags),
+            r.confidence,
+            r.injection_detected ? 1 : 0,
+            r.injection_evidence,
+            analysis.heuristicFlagged ? 1 : 0,
+            analysis.promptChars,
+            analysis.metrics.input_tokens,
+            analysis.metrics.output_tokens,
+            analysis.metrics.latency_ms,
+            estimateCostUsd(analysis.metrics.input_tokens, analysis.metrics.output_tokens),
+            ticketId,
+          ).run()
+        } catch (err) {
+          // Surface store failures as a failed analysis instead of crashing the
+          // whole workflow run.
+          try {
+            await db.prepare(
+              "UPDATE ticket_ai_analyses SET status = 'failed', error = ?, updated_at = datetime('now') WHERE ticket_id = ?"
+            ).bind(err instanceof Error ? err.message : String(err), ticketId).run()
+          } catch {
+            /* ignore */
+          }
+          throw err
+        }
+
+        // Auto-triage the ticket itself: AI category + priority. Only applied
+        // while the admin has not overridden anything (defaults are an empty
+        // category with medium/normal priority) so a manual override or a
+        // re-run never clobbers an admin decision.
         await db.prepare(
-          `UPDATE ticket_ai_analyses
-           SET status = 'failed',
-               model = ?, workflow_instance_id = ?, refusal = ?,
-               heuristic_injection = ?, prompt_chars = ?,
-               input_tokens = ?, output_tokens = ?, latency_ms = ?,
-               cost_usd = ?, error = ?, updated_at = datetime('now')
-           WHERE ticket_id = ?`
-        ).bind(
-          AI_MODEL,
-          event.instanceId,
-          analysis.refusal,
-          analysis.heuristicFlagged ? 1 : 0,
-          analysis.promptChars,
-          analysis.metrics.input_tokens,
-          analysis.metrics.output_tokens,
-          analysis.metrics.latency_ms,
-          estimateCostUsd(analysis.metrics.input_tokens, analysis.metrics.output_tokens),
-          analysis.refusal ? 'model refused to analyze' : 'no result',
-          ticketId,
-        ).run()
-        return
-      }
-
-      const r = analysis.result
-      await db.prepare(
-        `UPDATE ticket_ai_analyses
-         SET status = 'completed',
-             model = ?, workflow_instance_id = ?, schema_version = ?,
-             summary = ?, category = ?, priority = ?, sentiment = ?,
-             key_points = ?, suggested_steps = ?, tags = ?, confidence = ?,
-             injection_detected = ?, injection_evidence = ?,
-             heuristic_injection = ?, prompt_chars = ?,
-             input_tokens = ?, output_tokens = ?, latency_ms = ?, cost_usd = ?,
-             error = NULL, updated_at = datetime('now')
-         WHERE ticket_id = ?`
-      ).bind(
-        AI_MODEL,
-        event.instanceId,
-        AI_SCHEMA_VERSION,
-        r.summary,
-        r.category,
-        r.priority,
-        r.sentiment,
-        JSON.stringify(r.key_points),
-        JSON.stringify(r.suggested_steps),
-        JSON.stringify(r.tags),
-        r.confidence,
-        r.injection_detected ? 1 : 0,
-        r.injection_evidence,
-        analysis.heuristicFlagged ? 1 : 0,
-        analysis.promptChars,
-        analysis.metrics.input_tokens,
-        analysis.metrics.output_tokens,
-        analysis.metrics.latency_ms,
-        estimateCostUsd(analysis.metrics.input_tokens, analysis.metrics.output_tokens),
-        ticketId,
-      ).run()
-
-      // Auto-triage the ticket itself: AI category + priority (admin can override later).
-      await db.prepare('UPDATE tickets SET category = ?, priority = ?, updated_at = datetime(\'now\') WHERE id = ?')
-        .bind(r.category, r.priority, ticketId).run()
-    })
+          `UPDATE tickets SET category = ?, priority = ?, updated_at = datetime('now')
+           WHERE id = ? AND (category IS NULL OR category = '') AND priority IN ('medium', 'normal')`
+        ).bind(r.category, r.priority, ticketId).run()
+      },
+    )
 
     return { ticket_id: ticketId, status: analysis.refusal ? 'failed' : 'completed' }
   }

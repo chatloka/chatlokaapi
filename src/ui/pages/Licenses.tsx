@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
 import {
   Card,
   CardContent,
@@ -74,12 +74,6 @@ interface License {
 
 interface LicensesResponse {
   licenses: License[]
-}
-
-function toWIB(dateStr: string | null) {
-  if (!dateStr) return "-"
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("en-GB", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
 }
 
 export function Licenses() {
@@ -160,9 +154,15 @@ export function Licenses() {
         credentials: "include",
         body: JSON.stringify({ status }),
       })
-      if (res.ok) fetchLicenses()
+      if (res.ok) {
+        fetchLicenses()
+        toast.success("Status updated")
+      } else {
+        toast.error("Failed to update status")
+      }
     } catch (error) {
       console.error("Failed to update status:", error)
+      toast.error("Failed to update status")
     }
   }
 
@@ -180,9 +180,13 @@ export function Licenses() {
         setSelectedLicense(null)
         setNewDomain("")
         fetchLicenses()
+        toast.success("Domain updated")
+      } else {
+        toast.error("Failed to update domain")
       }
     } catch (error) {
       console.error("Failed to update domain:", error)
+      toast.error("Failed to update domain")
     }
   }
 

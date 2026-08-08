@@ -58,7 +58,7 @@ const tools: ToolConfig[] = [
       mcp: {
         servers: {
           chatloka: {
-            type: "remote",
+            type: "streamable-http",
             url: MCP_URL,
             oauth: false,
             headers: {

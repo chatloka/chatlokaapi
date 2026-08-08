@@ -109,8 +109,9 @@ chatlokaapi/
 │   │   ├── license.ts        # LicenseService (D1 CRUD + tamper detection)
 │   │   ├── plugin.ts         # PluginService (D1 + R2)
 │   │   ├── fileManager.ts    # FileManagerService (R2 list/folder/delete/upload)
+│   │   ├── sanitize.ts       # sanitizeHtml (allowlist HTML sanitizer) + stripControlChars — applied to inbound email before storage
 │   │   ├── telegram.ts       # (removed — moved to src/telegram/)
-│   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens)
+│   │   └── jwt.ts            # signHs256 / verifyHs256 (JWT for download tokens, HS256-only, exp required, timing-safe)
 │   ├── telegram/             # Telegram bot — split per-tool modules (MCP parity)
 │   │   ├── service.ts        # TelegramBotService: webhook entry, registry dispatch, chat-state persistence
 │   │   ├── botApi.ts         # Telegram API client + types + helpers (escapeHtml, inlineKeyboard, parseCallbackData…)

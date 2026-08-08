@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { parseDbDate } from "@/lib/dates"
+import { toWIB } from "@/lib/dates"
 import {
   Card,
   CardContent,
@@ -93,19 +93,6 @@ function parseResendMeta(raw: string): ResendMeta | null {
   } catch {
     return null
   }
-}
-
-function toWIB(dateStr: string) {
-  const d = parseDbDate(dateStr)
-  return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Jakarta",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
 }
 
 function DurationBadge({ ms }: { ms: number | null }) {
